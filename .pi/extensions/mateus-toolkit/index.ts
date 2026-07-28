@@ -2,7 +2,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 
 /**
- * mateus-toolkit - Controle de tendência + todo list + resumo detalhado
+ * mateus-toolkit - Força create_todo + resumo + controle de tendência
+ *
+ * Abordagem: before_agent_start injeta system prompt + mensagem obrigatória.
+ * O modelo é obrigado a chamar create_todo como PRIMEIRA tool.
  */
 
 interface TodoItem {
@@ -29,7 +32,6 @@ export default function (pi: ExtensionAPI) {
   let summary: Summary | null = null;
   let turnCounter = 0;
   let lastUserMessage = "";
-  let todoCreatedThisTurn = false;
 
   pi.on("session_start", async (_event, ctx) => {
     console.error("[MATEUS-TOOLKIT] Session started");
@@ -37,7 +39,6 @@ export default function (pi: ExtensionAPI) {
     summary = null;
     turnCounter = 0;
     lastUserMessage = "";
-    todoCreatedThisTurn = false;
 
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom") {
@@ -56,15 +57,16 @@ export default function (pi: ExtensionAPI) {
     name: "create_todo",
     label: "Create Todo",
     description:
-      "Gere um checklist com todos os passos para atender o pedido. PRIMEIRA tool em TODA resposta.",
-    promptSnippet: "create_todo: PRIMEIRA tool obrigatória",
+      "Gere um checklist com passos atômicos + resumo detalhado. PRIMEIRA tool obrigatória.",
+    promptSnippet: "create_todo: PRIMEIRA tool em TODA resposta",
     promptGuidelines: [
-      "Sempre chame create_todo antes de qualquer outra ação.",
-      "Cada item deve ser atômico e verificável.",
+      "Sua PRIMEIRA resposta DEVE ser create_todo.",
+      "NÃO responda com texto antes de create_todo.",
+      "Cada item = passo atômico e verificável.",
     ],
     parameters: Type.Object({
-      items: Type.Array(Type.String(), { description: "Passos para atender o pedido" }),
-      summary: Type.String({ description: "Resumo detalhado: arquitetura, stack, estrutura de arquivos" }),
+      items: Type.Array(Type.String(), { description: "Passos atômicos" }),
+      summary: Type.String({ description: "Resumo detalhado: arquitetura, stack, estrutura" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       console.error("[MATEUS-TOOLKIT] create_todo called");
@@ -77,14 +79,13 @@ export default function (pi: ExtensionAPI) {
 
       todo = newTodo;
       summary = newSummary;
-      todoCreatedThisTurn = true;
 
       pi.appendEntry("mateus-todo", newTodo);
       pi.appendEntry("mateus-summary", newSummary);
 
       const checklist = newTodo.items.map((item) => `- [ ] ${item.id}. ${item.text}`).join("\n");
       return {
-        content: [{ type: "text", text: `TODO (${newTodo.items.length} itens):\n${checklist}\nResumo salvo. Prossiga.` }],
+        content: [{ type: "text", text: `TODO (${newTodo.items.length} itens):\n${checklist}\nResumo salvo. Prossiga com a implementação.` }],
         details: { todo: newTodo, summary: newSummary },
       };
     },
@@ -119,7 +120,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "get_todo",
     label: "Get Todo",
-    description: "Consulte o todo list e resumo.",
+    description: "Consulte todo list e resumo.",
     parameters: Type.Object({}),
     async execute() {
       if (!todo) return { content: [{ type: "text", text: "Nenhum todo ativo." }] };
@@ -147,28 +148,33 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── Input ──
+  // ── Capturar input ──
   pi.on("input", async (event, ctx) => {
     if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
     lastUserMessage = event.text;
-    todoCreatedThisTurn = false;
     turnCounter = 0;
     return { action: "continue" };
   });
 
-  // ── before_agent_start ──
+  // ── before_agent_start: FORÇA create_todo ──
   pi.on("before_agent_start", async (event, ctx) => {
     const systemPrompt = ctx.getSystemPrompt();
 
+    const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
+
     let injected = `
 
-[MATEUS-TOOLKIT]
-1. PRIMEIRA ação: chame create_todo com items (passos atômicos) e summary (resumo detalhado).
-2. Implemente normalmente após create_todo.
-3. Ao concluir cada passo, chame check_todo com o ID.
-4. NÃO pule create_todo.
+[MATEUS-TOOLKIT - REGRAS OBRIGATÓRIAS]
+REGRA 1: Sua PRIMEIRA resposta DEVE conter EXATAMENTE UMA chamada à tool create_todo.
+REGRA 2: NÃO escreva nenhum texto antes ou depois de create_todo nesta primeira resposta.
+REGRA 3: O campo items deve conter TODOS os passos atômicos necessários.
+REGRA 4: O campo summary deve conter o resumo detalhado da implementação.
+REGRA 5: Somente APÓS create_todo retornar resultado, você pode escrever texto e usar outras tools.
+EXEMPLO de resposta correta: SOMENTE a chamada create_todo, nada mais.
+O usuário pediu: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
 
+    // Controle de tendência a cada 5 turnos
     if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
@@ -182,7 +188,7 @@ Valide se está seguindo o plano:
 Concluídos (${done.length}): ${doneList || "(nenhum)"}
 Pendentes (${pending.length}): ${pendingList || "(nenhum)"}
 Resumo: ${summary?.text || "(nenhum)"}
-Se desviou, corrija. Se OK, continue e marque check_todo ao final.
+Se desviou, corrija. Se OK, continue e marque check_todo.
 [/CONTROLE TENDÊNCIA]`;
     }
 
@@ -194,8 +200,13 @@ Se desviou, corrija. Se OK, continue e marque check_todo ao final.
 
   // ── Bloquear tools antes de create_todo ──
   pi.on("tool_call", async (event, ctx) => {
-    if (todoCreatedThisTurn) return;
     if (["create_todo", "check_todo", "get_todo"].includes(event.toolName)) return;
+    if (todo) return;
     return { block: true, reason: `BLOQUEADO: chame create_todo PRIMEIRO.` };
+  });
+
+  // ── after_provider_request: log para debug ──
+  pi.on("before_provider_request", async (event, ctx) => {
+    console.error("[MATEUS-TOOLKIT] Provider request sent");
   });
 }
