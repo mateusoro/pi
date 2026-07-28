@@ -42,3 +42,8 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+temp-little-coder/
+app.js
+jogo-da-velha/
+realtime-chat/
+task-api/
