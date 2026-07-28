@@ -3,45 +3,85 @@ import { resolve, isAbsolute, normalize } from "node:path";
 import { detectWriteTargets, splitCommandChain } from "./shell-write.ts";
 import { log } from "./logger.ts";
 
-// Lista de comandos bash permitidos (whitelist).
-const BUILTIN_SAFE_PREFIXES: readonly string[] = [
-  "ls", "cat", "head", "tail", "wc", "pwd", "echo", "printf", "date",
-  "which", "type", "env", "printenv", "uname", "whoami", "id",
-  "git log", "git status", "git diff", "git show", "git branch",
-  "git remote", "git stash list", "git tag",
-  "find ", "grep ", "rg ", "ag ", "fd ", "sed ",
-  "python ", "python3 ", "node ", "ruby ", "perl ",
-  "pip show", "pip list", "npm list", "cargo metadata",
-  "df ", "du ", "free ", "top -bn", "ps ",
-  "curl -I", "curl --head",
-  "cp ", "mv ", "mkdir ", "touch ",
+// Permission gate - abordagem DENY-LIST
+// Tudo é permitido POR PADRÃO. Bloqueia apenas comandos perigosos.
+
+// ── Comandos perigosos que SEMPRE são bloqueados ──
+const BLOCKED_COMMANDS: readonly string[] = [
+  "rm -rf /",
+  "rm -rf /*",
+  "mkfs",
+  "dd if=/dev/zero",
+  "dd if=/dev/random",
+  "> /dev/sda",
+  ":(){ :|:& };:",   // fork bomb
+  "chmod -R 777 /",
+  "chown -R root",
+  "shutdown",
+  "reboot",
+  "halt",
+  "init 0",
+  "init 6",
+  "systemctl stop",
+  "killall",
+  "pkill -9",
 ];
 
-export function parseExtraPrefixes(raw: string | undefined): string[] {
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((s) => s.trimStart())
-    .map((s) => (s.length > 0 && s !== " ".repeat(s.length) ? s : ""))
-    .filter((s) => s.length > 0);
+// ── Comandos que bloqueiam redirecionamento para paths do sistema ──
+const SYSTEM_PATHS = [
+  "/etc/",
+  "/usr/",
+  "/var/",
+  "/boot/",
+  "/sbin/",
+  "/bin/",
+  "/lib/",
+  "/proc/",
+  "/sys/",
+  "/dev/",
+];
+
+/** Verifica se um caminho é do sistema (perigoso de escrever). */
+function isSystemPath(path: string): boolean {
+  const normalized = normalize(path);
+  return SYSTEM_PATHS.some((sp) => normalized.startsWith(sp));
 }
 
-export function getSafePrefixes(): string[] {
-  return [...BUILTIN_SAFE_PREFIXES, ...parseExtraPrefixes(process.env.MATEUS_BASH_ALLOW)];
-}
+/** Verifica se um comando é perigoso (deny-list). */
+function isDangerousCommand(command: string): { dangerous: boolean; reason?: string } {
+  const trimmed = command.trim().toLowerCase();
 
-// ── rm seguro: só dentro do cwd ──
+  // Checar comandos bloqueados explicitamente
+  for (const blocked of BLOCKED_COMMANDS) {
+    if (trimmed === blocked || trimmed.startsWith(blocked + " ")) {
+      return { dangerous: true, reason: `Comando bloqueado: "${blocked}"` };
+    }
+  }
 
-/** Extrai os argumentos (não-flags) de um comando rm. */
-function extractRmTargets(command: string): string[] {
-  // Remove o "rm " inicial e flags como -rf, -f, -r, -i, etc.
-  const args = command.replace(/^rm\s+/, "").split(/\s+/);
-  return args.filter((a) => !a.startsWith("-"));
+  // rm sem ser dentro do cwd é tratado separadamente
+  if (trimmed.startsWith("rm ")) {
+    // rm é permitido (checado pelo isRmSafe)
+    return { dangerous: false };
+  }
+
+  // Bloquear redirecionamento para paths do sistema
+  const writes = detectWriteTargets(command);
+  for (const write of writes) {
+    if (isSystemPath(write.path)) {
+      return {
+        dangerous: true,
+        reason: `Redirecionamento bloqueado: escrevendo em path do sistema "${write.path}"`,
+      };
+    }
+  }
+
+  return { dangerous: false };
 }
 
 /** Verifica se todos os alvos do rm estão dentro do cwd. */
 function isRmSafe(command: string, cwd: string): { safe: boolean; offenders: string[] } {
-  const targets = extractRmTargets(command);
+  const args = command.replace(/^rm\s+/, "").split(/\s+/);
+  const targets = args.filter((a) => !a.startsWith("-"));
   const normalizedCwd = normalize(cwd);
   const offenders: string[] = [];
 
@@ -52,8 +92,6 @@ function isRmSafe(command: string, cwd: string): { safe: boolean; offenders: str
     } else {
       resolved = normalize(resolve(cwd, target));
     }
-
-    // Checa se está dentro do cwd
     if (!resolved.startsWith(normalizedCwd)) {
       offenders.push(target);
     }
@@ -62,23 +100,10 @@ function isRmSafe(command: string, cwd: string): { safe: boolean; offenders: str
   return { safe: offenders.length === 0, offenders };
 }
 
-export function isSafeBash(command: string, prefixes: readonly string[] = getSafePrefixes(), cwd?: string): boolean {
-  if (detectWriteTargets(command).length > 0) return false;
-  const segments = splitCommandChain(command);
-  if (segments.length === 0) return false;
-  return segments.every((segment) => {
-    // rm é tratado separadamente (permitido dentro do cwd)
-    if (segment.trimStart().startsWith("rm ")) {
-      return cwd ? isRmSafe(segment, cwd).safe : false;
-    }
-    return prefixes.some((p) => segment.startsWith(p));
-  });
-}
-
 const SHELL_TOOLS = new Set(["bash", "Bash"]);
 
 export function registerPermissionGate(pi: ExtensionAPI) {
-  log("INFO", "Permission gate loaded");
+  log("INFO", "Permission gate loaded (deny-list mode)");
 
   pi.on("tool_call", async (event, ctx) => {
     const toolName = (event as any).toolName;
@@ -86,49 +111,31 @@ export function registerPermissionGate(pi: ExtensionAPI) {
 
     if (SHELL_TOOLS.has(toolName)) {
       const cmd = input?.command;
-      if (typeof cmd === "string") {
-        const cwd = ctx.cwd;
+      if (typeof cmd !== "string") return;
 
-        // Checar rm separadamente
-        const segments = splitCommandChain(cmd);
-        for (const segment of segments) {
-          if (segment.trimStart().startsWith("rm ")) {
-            const { safe, offenders } = isRmSafe(segment, cwd);
-            if (!safe) {
-              log("BLOCK", `rm bloqueado (fora do cwd): ${offenders.join(", ")}`);
-              return {
-                block: true,
-                reason:
-                  `rm bloqueado: ${offenders.map((o) => `"${o}"`).join(", ")} está fora do diretório de trabalho (${cwd}). ` +
-                  `rm só é permitido dentro de ${cwd}.`,
-              };
-            }
-            // rm dentro do cwd é permitido, pula pra próxima checagem
-            continue;
-          }
-        }
+      const segments = splitCommandChain(cmd);
 
-        // Checar whitelist para outros comandos
-        if (!isSafeBash(cmd, undefined, cwd)) {
-          const writes = detectWriteTargets(cmd);
-          if (writes.length > 0) {
-            log("BLOCK", `Shell write bloqueado: ${writes.map((w) => w.path).join(", ")}`);
+      for (const segment of segments) {
+        // 1. Checar rm (só dentro do cwd)
+        if (segment.trimStart().startsWith("rm ")) {
+          const { safe, offenders } = isRmSafe(segment, ctx.cwd);
+          if (!safe) {
+            log("BLOCK", `rm bloqueado (fora do cwd): ${offenders.join(", ")}`);
             return {
               block: true,
               reason:
-                `Shell whitelist: este comando escreve em ${writes.map((w) => `"${w.path}"`).join(", ")} ` +
-                `via redirecionamento. Use a tool Write para arquivo novo, ou Edit para existente.`,
+                `rm bloqueado: ${offenders.map((o) => `"${o}"`).join(", ")} está fora do diretório de trabalho (${ctx.cwd}). ` +
+                `rm só é permitido dentro de ${ctx.cwd}.`,
             };
           }
-          const offender = segments.find((s) => {
-            if (s.trimStart().startsWith("rm ")) return false;
-            return !getSafePrefixes().some((p) => s.startsWith(p));
-          }) ?? cmd;
-          log("BLOCK", `Shell command bloqueado: ${offender.split(/\s+/)[0]}`);
-          return {
-            block: true,
-            reason: `Shell whitelist: "${offender.split(/\s+/)[0]}" não está na lista de comandos permitidos.`,
-          };
+          continue;
+        }
+
+        // 2. Checar deny-list de comandos perigosos
+        const { dangerous, reason } = isDangerousCommand(segment);
+        if (dangerous) {
+          log("BLOCK", reason!);
+          return { block: true, reason: reason! };
         }
       }
     }
