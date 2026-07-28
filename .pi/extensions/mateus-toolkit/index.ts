@@ -79,6 +79,7 @@ export default function (pi: ExtensionAPI) {
       console.error("[MATEUS-TOOLKIT] create_todo called");
       todoCreatedThisTurn = true;
       retryCount = 0;
+      turnCounter = 0;
 
       const newTodo: TodoList = {
         items: params.items.map((text, i) => ({ id: i + 1, text, done: false })),
@@ -163,7 +164,6 @@ export default function (pi: ExtensionAPI) {
     if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
     lastUserMessage = event.text;
     todoCreatedThisTurn = false;
-    turnCounter = 0;
     return { action: "continue" };
   });
 
