@@ -204,20 +204,56 @@ Pedido: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
     }
 
-    // Controle de tendência a cada 5 turnos
+    // ── CONTROLE DE TENDÊNCIA: a cada 5 turnos ──
     if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
-      const pendingList = pending.map((i) => `  - #${i.id}: ${i.text}`).join("\n");
-      const doneList = done.map((i) => `  - #${i.id}: ${i.text}`).join("\n");
+      const total = todo.items.length;
+
+      const doneList = done.map((i) => `  [x] #${i.id}. ${i.text}`).join("\n") || "  (nenhum)";
+      const pendingList = pending.map((i) => `  [ ] #${i.id}. ${i.text}`).join("\n") || "  (nenhum)";
+
+      const progresso = total > 0 ? Math.round((done.length / total) * 100) : 0;
 
       instruction += `
 
-[CONTROLE TENDÊNCIA - TURNO ${turnCounter}]
-Concluídos (${done.length}): ${doneList || "(nenhum)"}
-Pendentes (${pending.length}): ${pendingList || "(nenhum)"}
-Resumo: ${summary?.text || "(nenhum)"}
-Valide se está no plano. Se desviou, corrija.
+═══════════════════════════════════════════════════════════════
+  CONTROLE DE TENDÊNCIA — TURNO ${turnCounter}
+═══════════════════════════════════════════════════════════════
+
+Você está implementando há ${turnCounter} turnos. PARE e VALIDE.
+
+═══ TODO LIST ATUAL (${done.length}/${total} — ${progresso}% concluído) ═══
+
+CONCLUÍDOS:
+${doneList}
+
+PENDENTES:
+${pendingList}
+
+═══ RESUMO DETALHADO DA IMPLEMENTAÇÃO ═══
+
+${summary?.text || "(nenhum resumo salvo — erro)"}
+
+═══ INSTRUÇÕES OBRIGATÓRIAS ═══
+
+1. Leia CADA item pendente acima.
+2. Compare com o que você JÁ FEZ nestes ${turnCounter} turnos.
+3. Responda EXATAMENTE neste formato:
+
+   ANÁLISE:
+   - O que fiz até agora: [liste brevemente]
+   - Itens concluídos: [liste por ID]
+   - Itens pendentes: [liste por ID]
+   - Estou no caminho certo? [SIM/NÃO]
+   - Se NÃO: o que preciso corrigir: [descreva]
+
+4. Se há itens pendentes, continue implementando o PRÓXIMO item da lista.
+5. Ao concluir cada item, CHAME check_todo(id=X) para marcá-lo.
+6. NÃO pule itens. NÃO crie funcionalidades fora do todo list.
+7. NÃO mude o escopo. Siga EXATAMENTE o resumo detalhado.
+
+═══════════════════════════════════════════════════════════════
 [/CONTROLE TENDÊNCIA]`;
     }
 
