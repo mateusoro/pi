@@ -204,57 +204,22 @@ Pedido: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
     }
 
-    // ── CONTROLE DE TENDÊNCIA: a cada 5 turnos ──
+    // ── CONTROLE DE TENDÊNCIA: reforço positivo a cada 5 turnos ──
     if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
       const total = todo.items.length;
-
-      const doneList = done.map((i) => `  [x] #${i.id}. ${i.text}`).join("\n") || "  (nenhum)";
-      const pendingList = pending.map((i) => `  [ ] #${i.id}. ${i.text}`).join("\n") || "  (nenhum)";
-
       const progresso = total > 0 ? Math.round((done.length / total) * 100) : 0;
+
+      const proximo = pending.length > 0 ? pending[0] : null;
 
       instruction += `
 
-═══════════════════════════════════════════════════════════════
-  CONTROLE DE TENDÊNCIA — TURNO ${turnCounter}
-═══════════════════════════════════════════════════════════════
-
-Você está implementando há ${turnCounter} turnos. PARE e VALIDE.
-
-═══ TODO LIST ATUAL (${done.length}/${total} — ${progresso}% concluído) ═══
-
-CONCLUÍDOS:
-${doneList}
-
-PENDENTES:
-${pendingList}
-
-═══ RESUMO DETALHADO DA IMPLEMENTAÇÃO ═══
-
-${summary?.text || "(nenhum resumo salvo — erro)"}
-
-═══ INSTRUÇÕES OBRIGATÓRIAS ═══
-
-1. Leia CADA item pendente acima.
-2. Compare com o que você JÁ FEZ nestes ${turnCounter} turnos.
-3. Responda EXATAMENTE neste formato:
-
-   ANÁLISE:
-   - O que fiz até agora: [liste brevemente]
-   - Itens concluídos: [liste por ID]
-   - Itens pendentes: [liste por ID]
-   - Estou no caminho certo? [SIM/NÃO]
-   - Se NÃO: o que preciso corrigir: [descreva]
-
-4. Se há itens pendentes, continue implementando o PRÓXIMO item da lista.
-5. Ao concluir cada item, CHAME check_todo(id=X) para marcá-lo.
-6. NÃO pule itens. NÃO crie funcionalidades fora do todo list.
-7. NÃO mude o escopo. Siga EXATAMENTE o resumo detalhado.
-
-═══════════════════════════════════════════════════════════════
-[/CONTROLE TENDÊNCIA]`;
+[REFORÇO — TURNO ${turnCounter}]
+Bom progresso: ${done.length}/${total} (${progresso}%).
+Próximo item: #${proximo?.id}. ${proximo?.text || "(nenhum pendente)"}
+Mantenha o ritmo. Siga o resumo. Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
+[/REFORÇO]`;
     }
 
     return { systemPrompt: systemPrompt + instruction };
