@@ -1,188 +1,201 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type } from "@earendil-works/pi-ai";
 
 /**
- * mateus-toolkit - Extensão que força criação de task pela IA
- * 
- * Usa before_agent_start para injetar mensagem + system prompt forte.
- * USA context para garantir que create_task seja chamado sempre.
+ * mateus-toolkit - Controle de tendência + todo list + resumo detalhado
  */
 
-interface Task {
-  id: string;
-  description: string;
-  status: "pending" | "in_progress" | "completed";
+interface TodoItem {
+  id: number;
+  text: string;
+  done: boolean;
+}
+
+interface TodoList {
+  items: TodoItem[];
+  nextId: number;
+  createdAt: number;
+}
+
+interface Summary {
+  text: string;
   createdAt: number;
 }
 
 export default function (pi: ExtensionAPI) {
-  let currentTask: Task | null = null;
-  let lastUserMessage = "";
-  let taskCreationPending = false;
+  console.error("[MATEUS-TOOLKIT] Loading...");
 
-  // Resetar estado na sessão
+  let todo: TodoList | null = null;
+  let summary: Summary | null = null;
+  let turnCounter = 0;
+  let lastUserMessage = "";
+  let todoCreatedThisTurn = false;
+
   pi.on("session_start", async (_event, ctx) => {
-    currentTask = null;
-    taskCreationPending = false;
+    console.error("[MATEUS-TOOLKIT] Session started");
+    todo = null;
+    summary = null;
+    turnCounter = 0;
     lastUserMessage = "";
+    todoCreatedThisTurn = false;
 
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === "mateus-toolkit-task") {
-        currentTask = entry.data as Task;
-        if (currentTask?.status === "completed") {
-          currentTask = null;
+      if (entry.type === "custom") {
+        if (entry.customType === "mateus-todo") {
+          todo = entry.data as TodoList;
+        }
+        if (entry.customType === "mateus-summary") {
+          summary = entry.data as Summary;
         }
       }
     }
   });
 
-  // Registrar tool para criar task
+  // ── create_todo ──
   pi.registerTool({
-    name: "create_task",
-    label: "Create Task",
-    description: "Crie uma task para cada ação ou solicitação do usuário. SEMPRE chame esta tool PRIMEIRO.",
-    promptSnippet: "create_task: primeira tool obrigatória para CADA mensagem",
+    name: "create_todo",
+    label: "Create Todo",
+    description:
+      "Gere um checklist com todos os passos para atender o pedido. PRIMEIRA tool em TODA resposta.",
+    promptSnippet: "create_todo: PRIMEIRA tool obrigatória",
     promptGuidelines: [
-      "create_task DEVE ser chamada como PRIMEIRA tool em TODA resposta, mesmo para saudações.",
-      "NUNCA responda sem antes chamar create_task.",
-      "Cada mensagem do usuário = uma nova task.",
+      "Sempre chame create_todo antes de qualquer outra ação.",
+      "Cada item deve ser atômico e verificável.",
     ],
     parameters: Type.Object({
-      description: Type.String({ description: "Resumo da solicitação do usuário" }),
+      items: Type.Array(Type.String(), { description: "Passos para atender o pedido" }),
+      summary: Type.String({ description: "Resumo detalhado: arquitetura, stack, estrutura de arquivos" }),
     }),
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const task: Task = {
-        id: Date.now().toString(),
-        description: params.description,
-        status: "in_progress",
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      console.error("[MATEUS-TOOLKIT] create_todo called");
+      const newTodo: TodoList = {
+        items: params.items.map((text, i) => ({ id: i + 1, text, done: false })),
+        nextId: params.items.length + 1,
         createdAt: Date.now(),
       };
+      const newSummary: Summary = { text: params.summary, createdAt: Date.now() };
 
-      currentTask = task;
-      taskCreationPending = false;
-      pi.appendEntry("mateus-toolkit-task", task);
+      todo = newTodo;
+      summary = newSummary;
+      todoCreatedThisTurn = true;
 
+      pi.appendEntry("mateus-todo", newTodo);
+      pi.appendEntry("mateus-summary", newSummary);
+
+      const checklist = newTodo.items.map((item) => `- [ ] ${item.id}. ${item.text}`).join("\n");
       return {
-        content: [{ type: "text", text: `Task "${task.description}" criada. Prossiga.` }],
-        details: { task },
+        content: [{ type: "text", text: `TODO (${newTodo.items.length} itens):\n${checklist}\nResumo salvo. Prossiga.` }],
+        details: { todo: newTodo, summary: newSummary },
       };
     },
   });
 
-  // Comandos
-  pi.registerCommand("tasks", {
-    description: "Listar tasks da sessão",
-    handler: async (_args, ctx) => {
-      const tasks: Task[] = [];
-      for (const entry of ctx.sessionManager.getBranch()) {
-        if (entry.type === "custom" && entry.customType === "mateus-toolkit-task") {
-          tasks.push(entry.data as Task);
-        }
-      }
-      if (tasks.length === 0) {
-        ctx.ui.notify("Nenhuma task", "info");
-        return;
-      }
-      ctx.ui.notify(tasks.map((t, i) => `${i + 1}. [${t.status}] ${t.description}`).join("\n"), "info");
+  // ── check_todo ──
+  pi.registerTool({
+    name: "check_todo",
+    label: "Check Todo",
+    description: "Marque um item como concluído.",
+    parameters: Type.Object({
+      id: Type.Number({ description: "ID do item" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!todo) return { content: [{ type: "text", text: "Nenhum todo ativo." }] };
+      const item = todo.items.find((i) => i.id === params.id);
+      if (!item) return { content: [{ type: "text", text: `Item #${params.id} não encontrado.` }] };
+
+      item.done = true;
+      pi.appendEntry("mateus-todo", { ...todo });
+
+      const pending = todo.items.filter((i) => !i.done);
+      const done = todo.items.filter((i) => i.done);
+      return {
+        content: [{ type: "text", text: `#${item.id} concluído: "${item.text}"\nProgresso: ${done.length}/${todo.items.length} - Restam ${pending.length}` }],
+        details: { todo },
+      };
     },
   });
 
-  pi.registerCommand("done", {
-    description: "Marcar task como concluída",
-    handler: async (_args, ctx) => {
-      if (!currentTask) { ctx.ui.notify("Nenhuma task ativa", "warning"); return; }
-      currentTask.status = "completed";
-      pi.appendEntry("mateus-toolkit-task", { ...currentTask });
-      ctx.ui.notify(`Task "${currentTask.description}" concluída!`, "info");
-      currentTask = null;
+  // ── get_todo ──
+  pi.registerTool({
+    name: "get_todo",
+    label: "Get Todo",
+    description: "Consulte o todo list e resumo.",
+    parameters: Type.Object({}),
+    async execute() {
+      if (!todo) return { content: [{ type: "text", text: "Nenhum todo ativo." }] };
+      const checklist = todo.items.map((item) => `- [${item.done ? "x" : " "}] ${item.id}. ${item.text}`).join("\n");
+      const summaryText = summary ? `\n\nResumo:\n${summary.text}` : "";
+      return { content: [{ type: "text", text: `TODO:\n${checklist}${summaryText}` }] };
     },
   });
 
-  // Capturar input
+  // ── Comandos ──
+  pi.registerCommand("todo", {
+    description: "Mostrar todo list",
+    handler: async (_args, ctx) => {
+      if (!todo) { ctx.ui.notify("Nenhum todo ativo", "info"); return; }
+      const checklist = todo.items.map((item) => `[${item.done ? "x" : " "}] ${item.id}. ${item.text}`).join("\n");
+      ctx.ui.notify(checklist, "info");
+    },
+  });
+
+  pi.registerCommand("summary", {
+    description: "Mostrar resumo",
+    handler: async (_args, ctx) => {
+      if (!summary) { ctx.ui.notify("Nenhum resumo", "info"); return; }
+      ctx.ui.notify(summary.text, "info");
+    },
+  });
+
+  // ── Input ──
   pi.on("input", async (event, ctx) => {
-    if (event.text.startsWith("/") || event.source === "extension") {
-      return { action: "continue" };
-    }
+    if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
     lastUserMessage = event.text;
-    taskCreationPending = true;
+    todoCreatedThisTurn = false;
+    turnCounter = 0;
     return { action: "continue" };
   });
 
-  // FORÇAR task via before_agent_start - injeta mensagem + system prompt
+  // ── before_agent_start ──
   pi.on("before_agent_start", async (event, ctx) => {
-    // Se já tem task, não fazer nada
-    if (currentTask) {
-      return {};
-    }
-
     const systemPrompt = ctx.getSystemPrompt();
 
-    return {
-      // Injetar mensagem de contexto que força create_task
-      message: {
-        customType: "mateus-toolkit-forced",
-        content: `[SISTEMA] O usuário pediu: "${lastUserMessage.substring(0, 100)}". Você DEVE chamar create_task AGORA como sua primeira ação. Não responda nada além da chamada create_task.`,
-        display: false,
-      },
-      // Reforçar no system prompt
-      systemPrompt: systemPrompt + `
+    let injected = `
 
-[OBRIGATÓRIO: MATEUS-TOOLKIT]
-A cada mensagem do usuário, sua PRIMEIRA resposta DEVE conter uma chamada à tool create_task.
-NÃO responda com texto antes de chamar create_task.
-NÃO chame outras tools antes de create_task.
-Se o usuário disse "oi", crie task com descrição "Saudação do usuário".
-Se o usuário pediu algo, crie task com descrição resumida.
-create_task é OBRIGATÓRIA em 100% dos casos.
-[/OBRIGATÓRIO]`,
-    };
+[MATEUS-TOOLKIT]
+1. PRIMEIRA ação: chame create_todo com items (passos atômicos) e summary (resumo detalhado).
+2. Implemente normalmente após create_todo.
+3. Ao concluir cada passo, chame check_todo com o ID.
+4. NÃO pule create_todo.
+[/MATEUS-TOOLKIT]`;
+
+    if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
+      const pending = todo.items.filter((i) => !i.done);
+      const done = todo.items.filter((i) => i.done);
+      const pendingList = pending.map((i) => `  - #${i.id}: ${i.text}`).join("\n");
+      const doneList = done.map((i) => `  - #${i.id}: ${i.text}`).join("\n");
+
+      injected += `
+
+[CONTROLE TENDÊNCIA - TURNO ${turnCounter}]
+Valide se está seguindo o plano:
+Concluídos (${done.length}): ${doneList || "(nenhum)"}
+Pendentes (${pending.length}): ${pendingList || "(nenhum)"}
+Resumo: ${summary?.text || "(nenhum)"}
+Se desviou, corrija. Se OK, continue e marque check_todo ao final.
+[/CONTROLE TENDÊNCIA]`;
+    }
+
+    return { systemPrompt: systemPrompt + injected };
   });
 
-  // Bloquear tools que não são create_task quando não há task
+  // ── Contar turnos ──
+  pi.on("turn_end", async () => { turnCounter++; });
+
+  // ── Bloquear tools antes de create_todo ──
   pi.on("tool_call", async (event, ctx) => {
-    if (currentTask) return; // Task existe, permitir tudo
-    if (event.toolName === "create_task") return; // create_task sempre permitido
-
-    // Bloquear qualquer outra tool
-    return {
-      block: true,
-      reason: `BLOQUEADO: Chame create_task PRIMEIRO antes de usar ${event.toolName}.`,
-    };
-  });
-
-  // Após resposta, verificar se criou task
-  pi.on("agent_end", async (event, ctx) => {
-    if (!taskCreationPending) return;
-
-    const taskCreated = event.messages.some(
-      m => m.role === "toolResult" && m.toolName === "create_task"
-    );
-
-    if (taskCreated) {
-      taskCreationPending = false;
-      return;
-    }
-
-    // Não criou - forçar com followUp
-    taskCreationPending = false;
-    pi.sendUserMessage(
-      `Você não criou a task. Chame create_task AGORA com descrição: "${lastUserMessage.substring(0, 80)}"`,
-      { deliverAs: "followUp" }
-    );
-  });
-
-  // Auto-completar task
-  pi.on("agent_end", async (event, ctx) => {
-    if (currentTask && currentTask.status === "in_progress") {
-      const hasActions = event.messages.some(
-        m => m.role === "assistant" && m.content?.some(c => c.type === "tool_use")
-      );
-      if (hasActions) {
-        currentTask.status = "completed";
-        pi.appendEntry("mateus-toolkit-task", { ...currentTask });
-        ctx.ui.notify(`Task "${currentTask.description}" concluída!`, "info");
-        currentTask = null;
-      }
-    }
+    if (todoCreatedThisTurn) return;
+    if (["create_todo", "check_todo", "get_todo"].includes(event.toolName)) return;
+    return { block: true, reason: `BLOQUEADO: chame create_todo PRIMEIRO.` };
   });
 }

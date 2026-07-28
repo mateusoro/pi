@@ -1,61 +1,36 @@
 # mateus-toolkit
 
-Extensão para Pi que exige criação de task antes de executar ações.
+Extensão para Pi que força criação de todo list + resumo detalhado + controle de tendência.
 
 ## Funcionalidade
 
-Quando o usuário envia uma mensagem, a IA **deve** criar uma task usando a tool `create_task` antes de executar qualquer ação. Se não criar, a extensão injeta um prompt ordenando que crie.
+1. **create_todo** - Após cada prompt, gera checklist com passos atômicos e resumo detalhado (arquitetura, stack, estrutura)
+2. **check_todo** - Marca itens como concluídos
+3. **get_todo** - Consulta estado atual do todo e resumo
+4. **Controle de tendência** - A cada 5 turnos, injeta prompt validando se o agente está seguindo o plano
 
 ## Como testar
 
-### 1. Instalar o Pi
-
 ```powershell
-npm install -g @earendil-works/pi-coding-agent
-```
-
-### 2. Rodar com a extensão
-
-**Modo interativo** (recomendado para testar o fluxo completo):
-
-```powershell
-cd C:\Users\mateu\Documents\pi-mateus\pi
+# Modo interativo
 pi -e .pi/extensions/mateus-toolkit/index.ts
+
+# Modo impressão (teste rápido)
+pi -e .pi/extensions/mateus-toolkit/index.ts -p "crie um arquivo hello.txt"
 ```
 
-**Modo impressão** (teste rápido):
-
-```powershell
-pi -e .pi/extensions/mateus-toolkit/index.ts -p "diga oi"
-```
-
-### 3. O que acontece
-
-1. Você digita uma mensagem (ex: "crie uma API de login")
-2. A IA recebe a instrução no system prompt para usar `create_task`
-3. Se a IA **não** criar a task → a extensão injeta follow-up ordenando
-4. Se a IA **criar** a task → executa normalmente
-
-### 4. Comandos disponíveis
+## Comandos
 
 | Comando | Descrição |
 |---------|-----------|
-| `/tasks` | Listar todas as tasks da sessão |
-| `/done` | Marcar task atual como concluída |
+| `/todo` | Mostrar todo list |
+| `/summary` | Mostrar resumo detalhado |
 
-## Estrutura do projeto
+## Fluxo
 
 ```
-.pi/extensions/mateus-toolkit/
-└── index.ts    # Extensão principal
+Usuário → create_todo (checklist + resumo)
+        → implementação normal
+        → check_todo (marca itens concluídos)
+        → [a cada 5 turnos] controle de tendência
 ```
-
-## Configuração do provider
-
-Certifique-se de ter um provider configurado no Pi. Exemplo com OpenCode Zen:
-
-```powershell
-pi --provider opencode --model deepseek-v4-flash-free
-```
-
-Ou configure permanentemente via `/settings` no modo interativo.
