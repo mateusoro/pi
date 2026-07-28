@@ -50,12 +50,18 @@ export function registerControleTendencia(pi: ExtensionAPI) {
   pi.registerTool({
     name: "create_todo",
     label: "Create Todo",
-    description: "Gere um checklist com passos atômicos + resumo detalhado. PRIMEIRA tool obrigatória.",
+    description:
+      "Gere um checklist com passos atômicos + resumo detalhado. PRIMEIRA tool obrigatória. " +
+      "NUNCA invente dados. Se não sabe algo, inclua fase de pesquisa no todo.",
     promptSnippet: "create_todo: PRIMEIRA tool em TODA resposta",
     promptGuidelines: [
       "Sua PRIMEIRA resposta DEVE ser create_todo.",
       "NÃO responda com texto antes de create_todo.",
       "Cada item = passo atômico e verificável.",
+      "NUNCA invente informações. Use apenas dados reais e verificáveis.",
+      "Se não sabe sobre o assunto, PRIMEIRO item DEVE ser 'Pesquisar sobre [assunto]'.",
+      "Se não conhece uma API/lib, PRIMEIRO item DEVE ser 'Verificar documentação de [API/lib]'.",
+      "O resumo DEVE conter apenas fatos que você tem certeza. Se incerto, diga 'a ser verificado'.",
     ],
     parameters: Type.Object({
       items: Type.Array(Type.String(), { description: "Passos atômicos" }),
@@ -177,8 +183,16 @@ export function registerControleTendencia(pi: ExtensionAPI) {
 SUA ÚNICA PERMITIDA É CHAMAR create_todo.
 NÃO escreva texto. NÃO chame OUTRAS tools.
 APENAS: create_todo(items=["passo1","passo2"...], summary="resumo")
+
+REGRAS OBRIGATÓRIAS PARA O TODO:
+1. NUNCA invente dados. Use apenas fatos reais e verificáveis.
+2. Se NÃO sabe sobre o assunto: PRIMEIRO item = "Pesquisar sobre [assunto]".
+3. Se NÃO conhece uma API/lib: PRIMEIRO item = "Verificar documentação de [API/lib]".
+4. Se tem DÚVIDA sobre algo: inclua item "Verificar/validar [dúvida]".
+5. O resumo DEVE conter apenas certezas. Se incerto, diga "a ser verificado".
+6. NUNCA presupuna que algo funciona sem ter verificado.
+
 O usuário pediu: "${userSnippet}"
-Se já existe um todo ativo, chame get_todo para ver o estado.
 [/MATEUS-TOOLKIT]`;
 
     return { systemPrompt: systemPrompt + instruction };
