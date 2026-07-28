@@ -110,6 +110,32 @@ function isDangerousCommand(command: string): { dangerous: boolean; reason?: str
 function isRmSafe(command: string, cwd: string): { safe: boolean; offenders: string[] } {
   const args = command.replace(/^rm\s+/, "").split(/\s+/);
   const targets = args.filter((a) => !a.startsWith("-"));
+  return checkTargetsInsideCwd(targets, cwd);
+}
+
+/** Verifica se alvos de deleção (del, Remove-Item) estão dentro do cwd. */
+function isDeleteSafe(command: string, cwd: string): { safe: boolean; offenders: string[] } {
+  const trimmed = command.trim();
+
+  // Windows CMD: del /f /s /q path
+  if (trimmed.toLowerCase().startsWith("del ")) {
+    const args = trimmed.split(/\s+/).slice(1);
+    const targets = args.filter((a) => !a.startsWith("/"));
+    return checkTargetsInsideCwd(targets, cwd);
+  }
+
+  // PowerShell: Remove-Item -Recurse -Force path
+  if (trimmed.toLowerCase().startsWith("remove-item ")) {
+    const args = trimmed.split(/\s+/).slice(1);
+    const targets = args.filter((a) => !a.startsWith("-"));
+    return checkTargetsInsideCwd(targets, cwd);
+  }
+
+  return { safe: true, offenders: [] };
+}
+
+/** Checa se todos os alvos estão dentro do cwd. */
+function checkTargetsInsideCwd(targets: string[], cwd: string): { safe: boolean; offenders: string[] } {
   const normalizedCwd = normalize(cwd);
   const offenders: string[] = [];
 
@@ -144,8 +170,10 @@ export function registerPermissionGate(pi: ExtensionAPI) {
       const segments = splitCommandChain(cmd);
 
       for (const segment of segments) {
+        const lower = segment.trimStart().toLowerCase();
+
         // 1. Checar rm (só dentro do cwd)
-        if (segment.trimStart().startsWith("rm ")) {
+        if (lower.startsWith("rm ")) {
           const { safe, offenders } = isRmSafe(segment, ctx.cwd);
           if (!safe) {
             log("BLOCK", `rm bloqueado (fora do cwd): ${offenders.join(", ")}`);
@@ -159,7 +187,22 @@ export function registerPermissionGate(pi: ExtensionAPI) {
           continue;
         }
 
-        // 2. Checar deny-list de comandos perigosos
+        // 2. Checar del / Remove-Item (só dentro do cwd)
+        if (lower.startsWith("del ") || lower.startsWith("remove-item ")) {
+          const { safe, offenders } = isDeleteSafe(segment, ctx.cwd);
+          if (!safe) {
+            log("BLOCK", `delete bloqueado (fora do cwd): ${offenders.join(", ")}`);
+            return {
+              block: true,
+              reason:
+                `Delete bloqueado: ${offenders.map((o) => `"${o}"`).join(", ")} está fora do diretório de trabalho (${ctx.cwd}). ` +
+                `Deleção só é permitida dentro de ${ctx.cwd}.`,
+            };
+          }
+          continue;
+        }
+
+        // 3. Checar deny-list de comandos perigosos
         const { dangerous, reason } = isDangerousCommand(segment);
         if (dangerous) {
           log("BLOCK", reason!);
