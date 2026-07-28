@@ -3,6 +3,8 @@ import { log } from "./logger.ts";
 import { registerControleTendencia } from "./controle-tendencia.ts";
 import { registerWebFetch } from "./webfetch.ts";
 import { registerWebSearch } from "./websearch.ts";
+import { registerPermissionGate } from "./permission-gate.ts";
+import { registerQualityMonitor } from "./quality-monitor.ts";
 
 /**
  * mateus-toolkit - Extensão modular
@@ -11,6 +13,8 @@ import { registerWebSearch } from "./websearch.ts";
  *   - controle-tendencia: create_todo, check_todo, get_todo, reforço
  *   - webfetch: busca URL e retorna texto
  *   - websearch: busca DuckDuckGo e retorna resultados
+ *   - permission-gate: whitelist de comandos bash
+ *   - quality-monitor: anti-loop, detecta respostas repetidas
  */
 
 export default function (pi: ExtensionAPI) {
@@ -19,6 +23,8 @@ export default function (pi: ExtensionAPI) {
   registerControleTendencia(pi);
   registerWebFetch(pi);
   registerWebSearch(pi);
+  registerPermissionGate(pi);
+  registerQualityMonitor(pi);
 
   log("INFO", "All modules registered");
 }
