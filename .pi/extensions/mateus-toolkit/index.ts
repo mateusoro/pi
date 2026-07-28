@@ -220,26 +220,7 @@ Pedido: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
     }
 
-    // ── CONTROLE DE TENDÊNCIA: reforço positivo a cada 5 turnos ──
-    if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
-      log("REFORCO", `Controle de tendência injetado`, { turno: turnCounter, progresso: `${todo.items.filter(i => i.done).length}/${todo.items.length}` });
-      const pending = todo.items.filter((i) => !i.done);
-      const done = todo.items.filter((i) => i.done);
-      const total = todo.items.length;
-      const progresso = total > 0 ? Math.round((done.length / total) * 100) : 0;
-
-      const proximo = pending.length > 0 ? pending[0] : null;
-
-      instruction += `
-
-[REFORÇO — TURNO ${turnCounter}]
-Bom progresso: ${done.length}/${total} (${progresso}%).
-Próximo item: #${proximo?.id}. ${proximo?.text || "(nenhum pendente)"}
-Você é OBRIGADO a seguir este todo list e o resumo detalhado. NÃO desvie.
-Se não conseguir completar um item, chame create_todo para refazer o todo com um plano ajustado.
-Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
-[/REFORÇO]`;
-    }
+    // ── CONTROLE DE TENDÊNCIA: removido daqui, agora está no turn_end ──
 
     return { systemPrompt: systemPrompt + instruction };
   });
@@ -279,9 +260,30 @@ Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
     return { block: true, reason: `BLOQUEADO: chame create_todo PRIMEIRO.` };
   });
 
-  // ── Log de turnos ──
+  // ── Log de turnos + controle de tendência ──
   pi.on("turn_end", async (event) => {
     turnCounter++;
     log("TURN", `Turno ${turnCounter} finalizado`);
+
+    // Controle de tendência a cada 5 turnos
+    if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
+      const pending = todo.items.filter((i) => !i.done);
+      const done = todo.items.filter((i) => i.done);
+      const total = todo.items.length;
+      const progresso = total > 0 ? Math.round((done.length / total) * 100) : 0;
+      const proximo = pending.length > 0 ? pending[0] : null;
+
+      log("REFORCO", `Controle de tendência injetado`, { turno: turnCounter, progresso: `${done.length}/${total}` });
+
+      const msg = `[REFORÇO — TURNO ${turnCounter}]
+Bom progresso: ${done.length}/${total} (${progresso}%).
+Próximo item: #${proximo?.id}. ${proximo?.text || "(nenhum pendente)"}
+Você é OBRIGADO a seguir este todo list e o resumo detalhado. NÃO desvie.
+Se não conseguir completar um item, chame create_todo para refazer o todo com um plano ajustado.
+Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
+[/REFORÇO]`;
+
+      pi.sendUserMessage(msg, { deliverAs: "followUp" });
+    }
   });
 }
