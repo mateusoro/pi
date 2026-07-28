@@ -218,7 +218,9 @@ Pedido: "${userSnippet}"
 [REFORÇO — TURNO ${turnCounter}]
 Bom progresso: ${done.length}/${total} (${progresso}%).
 Próximo item: #${proximo?.id}. ${proximo?.text || "(nenhum pendente)"}
-Mantenha o ritmo. Siga o resumo. Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
+Você é OBRIGADO a seguir este todo list e o resumo detalhado. NÃO desvie.
+Se não conseguir completar um item, chame create_todo para refazer o todo com um plano ajustado.
+Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
 [/REFORÇO]`;
     }
 
