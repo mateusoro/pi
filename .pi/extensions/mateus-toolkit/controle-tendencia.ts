@@ -240,6 +240,7 @@ Pedido: "${userSnippet}"
 
       log("REFORCO", `Controle de tendência injetado`, { turno: turnCounter, progresso: `${done.length}/${total}` });
 
+      // Usar "steer" em vez de "followUp" pra entregar imediatamente
       pi.sendUserMessage(
         `[REFORÇO — TURNO ${turnCounter}]
 Bom progresso: ${done.length}/${total} (${progresso}%).
@@ -248,7 +249,7 @@ Você é OBRIGADO a seguir este todo list e o resumo detalhado. NÃO desvie.
 Se não conseguir, chame create_todo para refazer o plano.
 Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
 [/REFORÇO]`,
-        { deliverAs: "followUp" }
+        { deliverAs: "steer" }
       );
     }
   });
