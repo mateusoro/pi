@@ -25,7 +25,6 @@ export function registerControleTendencia(pi: ExtensionAPI) {
   let turnCounter = 0;
   let lastUserMessage = "";
   let todoCreatedThisTurn = false;
-  let retryCount = 0;
 
   pi.on("session_start", async (_event, ctx) => {
     log("INFO", "Controle de tendência: session started", { reason: _event.reason });
@@ -34,7 +33,6 @@ export function registerControleTendencia(pi: ExtensionAPI) {
     turnCounter = 0;
     lastUserMessage = "";
     todoCreatedThisTurn = false;
-    retryCount = 0;
 
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom") {
@@ -58,8 +56,6 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       "Sua PRIMEIRA resposta DEVE ser create_todo.",
       "NÃO responda com texto antes de create_todo.",
       "Cada item = passo atômico e verificável.",
-      "APÓS create_todo, implemente UM item por vez.",
-      "Ao concluir cada item, reporte o que fez e chame check_todo.",
     ],
     parameters: Type.Object({
       items: Type.Array(Type.String(), { description: "Passos atômicos" }),
@@ -68,7 +64,6 @@ export function registerControleTendencia(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       log("INFO", "create_todo called", { items: params.items.length });
       todoCreatedThisTurn = true;
-      retryCount = 0;
       turnCounter = 0;
 
       const newTodo: TodoList = {
@@ -86,7 +81,7 @@ export function registerControleTendencia(pi: ExtensionAPI) {
 
       const checklist = newTodo.items.map((item) => `- [ ] ${item.id}. ${item.text}`).join("\n");
       return {
-        content: [{ type: "text", text: `TODO (${newTodo.items.length} itens):\n${checklist}\nResumo salvo. Prossiga.` }],
+        content: [{ type: "text", text: `TODO (${newTodo.items.length} itens):\n${checklist}\nResumo salvo. Prossiga com o item #1.` }],
         details: { todo: newTodo, summary: newSummary },
       };
     },
@@ -111,8 +106,25 @@ export function registerControleTendencia(pi: ExtensionAPI) {
 
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
+      const proximo = pending.length > 0 ? pending[0] : null;
+
+      // Se tem próximo item, injetar steer pra forçar um item por vez
+      if (proximo) {
+        setTimeout(() => {
+          pi.sendUserMessage(
+            `Item #${item.id} concluído. Agora implemente APENAS o item #${proximo.id}: ${proximo.text}. Ao terminar, chame check_todo(id=${proximo.id}).`,
+            { deliverAs: "steer" }
+          );
+        }, 100);
+      }
+
       return {
-        content: [{ type: "text", text: `#${item.id} concluído: "${item.text}"\nProgresso: ${done.length}/${todo.items.length} - Restam ${pending.length}` }],
+        content: [{
+          type: "text",
+          text: proximo
+            ? `#${item.id} concluído: "${item.text}"\nProgresso: ${done.length}/${todo.items.length}\nPróximo: #${proximo.id}. ${proximo.text}`
+            : `#${item.id} concluído: "${item.text}"\nTODO 100% concluído!`,
+        }],
         details: { todo },
       };
     },
@@ -142,57 +154,53 @@ export function registerControleTendencia(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("summary", {
-    description: "Mostrar resumo",
-    handler: async (_args, ctx) => {
-      if (!summary) { ctx.ui.notify("Nenhum resumo", "info"); return; }
-      ctx.ui.notify(summary.text, "info");
-    },
-  });
-
   // ── Capturar input ──
   pi.on("input", async (event, ctx) => {
     if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
     lastUserMessage = event.text;
     todoCreatedThisTurn = false;
+    turnCounter = 0;
     return { action: "continue" };
   });
 
-  // ── before_agent_start: FORÇA create_todo ──
+  // ── before_agent_start: INJETAR instrução obrigatória ──
   pi.on("before_agent_start", async (event, ctx) => {
     const systemPrompt = ctx.getSystemPrompt();
-    const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
 
+    // Se já criou o todo neste turno, não injeta
     if (todoCreatedThisTurn) return { systemPrompt };
 
-    let instruction = "";
+    const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
 
-    if (retryCount === 0) {
-      instruction = `
-[MATEUS-TOOLKIT - OBRIGATÓRIO]
-REGRA 1: Sua PRIMEIRA resposta deve ser create_todo.
-REGRA 2: APÓS create_todo, implemente UM item por vez.
-REGRA 3: Ao concluir cada item, reporte o que fez e chame check_todo.
-REGRA 4: NÃO faça tudo de uma vez. Um passo, um reporte.
+    const instruction = `
+[MATEUS-TOOLKIT - BLOQUEADO ATÉ CRIAR TODO]
+SUA ÚNICA PERMITIDA É CHAMAR create_todo.
+NÃO escreva texto. NÃO chame OUTRAS tools.
+APENAS: create_todo(items=["passo1","passo2"...], summary="resumo")
 O usuário pediu: "${userSnippet}"
+Se já existe um todo ativo, chame get_todo para ver o estado.
 [/MATEUS-TOOLKIT]`;
-    } else if (retryCount === 1) {
-      instruction = `
-[MATEUS-TOOLKIT - VOCÊ NÃO OBEDECEU]
-Você NÃO chamou create_todo. Isso é OBRIGATÓRIO.
-Sua ÚNICA resposta agora DEVE ser: create_todo
-NADA MAIS. SOMENTE A TOOL.
-Resposta do usuário: "${userSnippet}"
-[/MATEUS-TOOLKIT]`;
-    } else {
-      instruction = `
-[MATEUS-TOOLKIT - BLOQUEADO - TENTATIVA ${retryCount + 1}]
-CHAME create_todo AGORA.
-Pedido: "${userSnippet}"
-[/MATEUS-TOOLKIT]`;
-    }
 
     return { systemPrompt: systemPrompt + instruction };
+  });
+
+  // ── tool_call: BLOQUEAR tudo que não é create_todo/check_todo/get_todo ──
+  pi.on("tool_call", async (event, ctx) => {
+    // Se já criou o todo, permitir check_todo e get_todo
+    if (todoCreatedThisTurn) {
+      if (["create_todo", "check_todo", "get_todo"].includes(event.toolName)) return;
+      // Permitir outras tools normalmente
+      return;
+    }
+
+    // Se NÃO criou o todo, bloquear TUDO exceto create_todo
+    if (event.toolName === "create_todo") return;
+
+    log("BLOCK", `Tool bloqueada (sem todo): ${event.toolName}`);
+    return {
+      block: true,
+      reason: `BLOQUEADO: Você NÃO pode usar ${event.toolName}. CHAME create_todo PRIMEIRO.`,
+    };
   });
 
   // ── agent_end: verificar se create_todo foi chamado ──
@@ -205,49 +213,44 @@ Pedido: "${userSnippet}"
 
     if (todoCalled) {
       todoCreatedThisTurn = true;
-      retryCount = 0;
-    } else {
-      retryCount++;
-      log("WARN", `create_todo NÃO chamado. Retry: ${retryCount}`);
-      if (retryCount < 5) {
-        pi.sendUserMessage(
-          `[SISTEMA] Chame create_todo AGORA com items e summary para: "${lastUserMessage.substring(0, 150)}"`,
-          { deliverAs: "followUp" }
-        );
-      }
+      return;
     }
+
+    // NÃO criou - forçar com steer (entrega imediatamente)
+    log("WARN", `create_todo NÃO chamado. Forçando...`);
+    pi.sendUserMessage(
+      `[SISTEMA] Você NÃO chamou create_todo. Sua ÚNICA resposta agora DEVE ser create_todo(items=["passo1"], summary="resumo"). NADA MAIS.`,
+      { deliverAs: "steer" }
+    );
   });
 
-  // ── Bloquear tools antes de create_todo ──
-  pi.on("tool_call", async (event, ctx) => {
-    if (["create_todo", "check_todo", "get_todo"].includes(event.toolName)) return;
-    if (todo) return;
-    log("BLOCK", `Tool bloqueada: ${event.toolName}`);
-    return { block: true, reason: `BLOQUEADO: chame create_todo PRIMEIRO.` };
-  });
-
-  // ── Turnos + controle de tendência ──
+  // ── Turnos + reforço ──
   pi.on("turn_end", async () => {
     turnCounter++;
     log("TURN", `Turno ${turnCounter} finalizado`);
 
-    if (turnCounter > 0 && turnCounter % 5 === 0 && todo && todo.items.some((i) => !i.done)) {
+    // Reforço a cada 5 turnos (se tem todo e tem itens pendentes)
+    if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
       const total = todo.items.length;
       const progresso = total > 0 ? Math.round((done.length / total) * 100) : 0;
-      const proximo = pending.length > 0 ? pending[0] : null;
 
-      log("REFORCO", `Controle de tendência injetado`, { turno: turnCounter, progresso: `${done.length}/${total}` });
+      // Se não tem pendentes, o trabalho acabou - não injeta reforço
+      if (pending.length === 0) {
+        log("REFORCO", "Todos concluídos, reforço ignorado");
+        return;
+      }
 
-      // Usar "steer" em vez de "followUp" pra entregar imediatamente
+      const proximo = pending[0];
+
+      log("REFORCO", `Reforço injetado`, { turno: turnCounter, progresso: `${done.length}/${total}` });
+
       pi.sendUserMessage(
         `[REFORÇO — TURNO ${turnCounter}]
-Bom progresso: ${done.length}/${total} (${progresso}%).
-Próximo item: #${proximo?.id}. ${proximo?.text || "(nenhum pendente)"}
-Você é OBRIGADO a seguir este todo list e o resumo detalhado. NÃO desvie.
-Se não conseguir, chame create_todo para refazer o plano.
-Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
+Progresso: ${done.length}/${total} (${progresso}%).
+Próximo: #${proximo.id}. ${proximo.text}
+Siga o plano. Ao concluir, chame check_todo(id=${proximo.id}).
 [/REFORÇO]`,
         { deliverAs: "steer" }
       );
