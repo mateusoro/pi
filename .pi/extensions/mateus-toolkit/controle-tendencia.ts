@@ -231,7 +231,7 @@ Pedido: "${userSnippet}"
     turnCounter++;
     log("TURN", `Turno ${turnCounter} finalizado`);
 
-    if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
+    if (turnCounter > 0 && turnCounter % 5 === 0 && todo && todo.items.some((i) => !i.done)) {
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
       const total = todo.items.length;
