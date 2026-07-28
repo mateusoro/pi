@@ -4,8 +4,8 @@ import { Type } from "@earendil-works/pi-ai";
 /**
  * mateus-toolkit - Força create_todo + resumo + controle de tendência
  *
- * Abordagem: before_agent_start injeta system prompt + mensagem obrigatória.
- * O modelo é obrigado a chamar create_todo como PRIMEIRA tool.
+ * Se o modelo não chamar create_todo, o próximo turno reforça更强.
+ * Continua até criar. Depois implementa normalmente.
  */
 
 interface TodoItem {
@@ -32,6 +32,8 @@ export default function (pi: ExtensionAPI) {
   let summary: Summary | null = null;
   let turnCounter = 0;
   let lastUserMessage = "";
+  let todoCreatedThisTurn = false;
+  let retryCount = 0;
 
   pi.on("session_start", async (_event, ctx) => {
     console.error("[MATEUS-TOOLKIT] Session started");
@@ -39,6 +41,8 @@ export default function (pi: ExtensionAPI) {
     summary = null;
     turnCounter = 0;
     lastUserMessage = "";
+    todoCreatedThisTurn = false;
+    retryCount = 0;
 
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom") {
@@ -70,6 +74,9 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       console.error("[MATEUS-TOOLKIT] create_todo called");
+      todoCreatedThisTurn = true;
+      retryCount = 0;
+
       const newTodo: TodoList = {
         items: params.items.map((text, i) => ({ id: i + 1, text, done: false })),
         nextId: params.items.length + 1,
@@ -152,6 +159,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
     lastUserMessage = event.text;
+    todoCreatedThisTurn = false;
     turnCounter = 0;
     return { action: "continue" };
   });
@@ -162,17 +170,39 @@ export default function (pi: ExtensionAPI) {
 
     const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
 
-    let injected = `
+    // Se já criou, não injeta mais
+    if (todoCreatedThisTurn) {
+      return { systemPrompt };
+    }
 
-[MATEUS-TOOLKIT - REGRAS OBRIGATÓRIAS]
-REGRA 1: Sua PRIMEIRA resposta DEVE conter EXATAMENTE UMA chamada à tool create_todo.
-REGRA 2: NÃO escreva nenhum texto antes ou depois de create_todo nesta primeira resposta.
-REGRA 3: O campo items deve conter TODOS os passos atômicos necessários.
-REGRA 4: O campo summary deve conter o resumo detalhado da implementação.
-REGRA 5: Somente APÓS create_todo retornar resultado, você pode escrever texto e usar outras tools.
-EXEMPLO de resposta correta: SOMENTE a chamada create_todo, nada mais.
+    // Intensidade aumenta a cada retry
+    let instruction = "";
+
+    if (retryCount === 0) {
+      instruction = `
+[MATEUS-TOOLKIT - OBRIGATÓRIO]
+REGRA: Sua PRIMEIRA e ÚNICA resposta deve ser a chamada create_todo.
+NÃO escreva texto. NÃO chame outras tools. SOMENTE create_todo.
 O usuário pediu: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
+    } else if (retryCount === 1) {
+      instruction = `
+[MATEUS-TOOLKIT - VOCÊ NÃO OBEDECEU]
+Você NÃO chamou create_todo na resposta anterior. Isso é OBRIGATÓRIO.
+Sua ÚNICA resposta agora DEVE ser: create_todo
+NADA MAIS. SOMENTE A TOOL. NENHUM TEXTO.
+Resposta do usuário: "${userSnippet}"
+[/MATEUS-TOOLKIT]`;
+    } else {
+      instruction = `
+[MATEUS-TOOLKIT - BLOQUEADO - TENTATIVA ${retryCount + 1}]
+VOCÊ ESTÁ IGNORANDO AS INSTRUÇÕES.
+CHAME create_todo AGORA. É A ÚNICA COISA QUE DEVE FAZER.
+SEM TEXTO. SEM EXPLICAÇÃO. SOMENTE:
+create_todo(items=["passo1","passo2"], summary="resumo")
+Pedido: "${userSnippet}"
+[/MATEUS-TOOLKIT]`;
+    }
 
     // Controle de tendência a cada 5 turnos
     if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
@@ -181,32 +211,50 @@ O usuário pediu: "${userSnippet}"
       const pendingList = pending.map((i) => `  - #${i.id}: ${i.text}`).join("\n");
       const doneList = done.map((i) => `  - #${i.id}: ${i.text}`).join("\n");
 
-      injected += `
+      instruction += `
 
 [CONTROLE TENDÊNCIA - TURNO ${turnCounter}]
-Valide se está seguindo o plano:
 Concluídos (${done.length}): ${doneList || "(nenhum)"}
 Pendentes (${pending.length}): ${pendingList || "(nenhum)"}
 Resumo: ${summary?.text || "(nenhum)"}
-Se desviou, corrija. Se OK, continue e marque check_todo.
+Valide se está no plano. Se desviou, corrija.
 [/CONTROLE TENDÊNCIA]`;
     }
 
-    return { systemPrompt: systemPrompt + injected };
+    return { systemPrompt: systemPrompt + instruction };
   });
 
   // ── Contar turnos ──
   pi.on("turn_end", async () => { turnCounter++; });
+
+  // ── agent_end: verificar se create_todo foi chamado ──
+  pi.on("agent_end", async (event, ctx) => {
+    if (todoCreatedThisTurn) return;
+
+    const todoCalled = event.messages.some(
+      (m) => m.role === "toolResult" && m.toolName === "create_todo"
+    );
+
+    if (todoCalled) {
+      todoCreatedThisTurn = true;
+      retryCount = 0;
+    } else {
+      retryCount++;
+      console.error(`[MATEUS-TOOLKIT] create_todo NÃO chamado. Retry: ${retryCount}`);
+
+      if (retryCount < 5) {
+        pi.sendUserMessage(
+          `[SISTEMA] Você não chamou create_todo. Chame create_todo AGORA com items e summary para: "${lastUserMessage.substring(0, 150)}"`,
+          { deliverAs: "followUp" }
+        );
+      }
+    }
+  });
 
   // ── Bloquear tools antes de create_todo ──
   pi.on("tool_call", async (event, ctx) => {
     if (["create_todo", "check_todo", "get_todo"].includes(event.toolName)) return;
     if (todo) return;
     return { block: true, reason: `BLOQUEADO: chame create_todo PRIMEIRO.` };
-  });
-
-  // ── after_provider_request: log para debug ──
-  pi.on("before_provider_request", async (event, ctx) => {
-    console.error("[MATEUS-TOOLKIT] Provider request sent");
   });
 }
