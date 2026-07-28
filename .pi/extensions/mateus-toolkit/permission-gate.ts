@@ -8,6 +8,7 @@ import { log } from "./logger.ts";
 
 // ── Comandos perigosos que SEMPRE são bloqueados ──
 const BLOCKED_COMMANDS: readonly string[] = [
+  // Linux - destrutivos
   "rm -rf /",
   "rm -rf /*",
   "mkfs",
@@ -25,10 +26,32 @@ const BLOCKED_COMMANDS: readonly string[] = [
   "systemctl stop",
   "killall",
   "pkill -9",
+
+  // Windows - PowerShell destrutivo
+  "Remove-Item -Recurse -Force C:\\",
+  "Remove-Item -Recurse -Force C:\\Windows",
+  "Remove-Item -Recurse -Force C:\\Program Files",
+  "Remove-Item -Recurse -Force $env:windir",
+  "Format-Volume",
+  "Clear-Disk",
+  "Stop-Computer",
+  "Restart-Computer",
+  "Stop-Process -Name explorer",
+
+  // Windows - cmd destrutivo
+  "rd /s /q C:\\",
+  "rd /s /q C:\\Windows",
+  "rd /s /q C:\\Program Files",
+  "del /f /s /q C:\\*",
+  "format C:",
+  "shutdown /s",
+  "shutdown /r",
+  "shutdown /f",
 ];
 
 // ── Comandos que bloqueiam redirecionamento para paths do sistema ──
 const SYSTEM_PATHS = [
+  // Linux
   "/etc/",
   "/usr/",
   "/var/",
@@ -39,6 +62,11 @@ const SYSTEM_PATHS = [
   "/proc/",
   "/sys/",
   "/dev/",
+  // Windows
+  "C:\\Windows",
+  "C:\\Program Files",
+  "C:\\Program Files (x86)",
+  "C:\\Users\\Default",
 ];
 
 /** Verifica se um caminho é do sistema (perigoso de escrever). */
