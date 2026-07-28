@@ -6,6 +6,7 @@ import { registerWebSearch } from "./websearch.ts";
 import { registerPermissionGate } from "./permission-gate.ts";
 import { registerQualityMonitor } from "./quality-monitor.ts";
 import { registerShellSession } from "./shell-session.ts";
+import { registerAddNewModel } from "./add-new-model.ts";
 
 /**
  * mateus-toolkit - Extensão modular
@@ -14,9 +15,10 @@ import { registerShellSession } from "./shell-session.ts";
  *   - controle-tendencia: create_todo, check_todo, get_todo, reforço
  *   - webfetch: busca URL e retorna texto
  *   - websearch: busca DuckDuckGo e retorna resultados
- *   - permission-gate: whitelist de comandos bash + rm dentro do cwd
+ *   - permission-gate: deny-list de comandos perigosos
  *   - quality-monitor: anti-loop, detecta respostas repetidas
  *   - shell-session: sessão bash persistente com timeout
+ *   - add-new-model: configurar provider OpenAI-like
  */
 
 export default function (pi: ExtensionAPI) {
@@ -28,6 +30,7 @@ export default function (pi: ExtensionAPI) {
   registerPermissionGate(pi);
   registerQualityMonitor(pi);
   registerShellSession(pi);
+  registerAddNewModel(pi);
 
   log("INFO", "All modules registered");
 }
