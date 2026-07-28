@@ -1,12 +1,22 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 /**
  * mateus-toolkit - Força create_todo + resumo + controle de tendência
- *
- * Se o modelo não chamar create_todo, o próximo turno reforça更强.
- * Continua até criar. Depois implementa normalmente.
  */
+
+const LOG_DIR = join(dirname(import.meta.url ?? __dirname, "").replace("file:///", ""), "logs");
+mkdirSync(LOG_DIR, { recursive: true });
+
+function log(level: string, msg: string, data?: unknown) {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] [${level}] ${msg}${data ? " " + JSON.stringify(data) : ""}\n`;
+  const logFile = join(LOG_DIR, `${new Date().toISOString().split("T")[0]}.log`);
+  appendFileSync(logFile, line);
+  console.error(`[MATEUS-TOOLKIT] ${msg}`);
+}
 
 interface TodoItem {
   id: number;
@@ -26,7 +36,7 @@ interface Summary {
 }
 
 export default function (pi: ExtensionAPI) {
-  console.error("[MATEUS-TOOLKIT] Loading...");
+  log("INFO", "Extension loading");
 
   let todo: TodoList | null = null;
   let summary: Summary | null = null;
@@ -36,7 +46,7 @@ export default function (pi: ExtensionAPI) {
   let retryCount = 0;
 
   pi.on("session_start", async (_event, ctx) => {
-    console.error("[MATEUS-TOOLKIT] Session started");
+    log("INFO", "Session started", { reason: _event.reason });
     todo = null;
     summary = null;
     turnCounter = 0;
@@ -76,7 +86,7 @@ export default function (pi: ExtensionAPI) {
       summary: Type.String({ description: "Resumo detalhado: arquitetura, stack, estrutura" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      console.error("[MATEUS-TOOLKIT] create_todo called");
+      log("INFO", "create_todo called", { items: params.items.length, summary: params.summary.substring(0, 100) });
       todoCreatedThisTurn = true;
       retryCount = 0;
       turnCounter = 0;
@@ -113,6 +123,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (!todo) return { content: [{ type: "text", text: "Nenhum todo ativo." }] };
       const item = todo.items.find((i) => i.id === params.id);
+      log("INFO", `check_todo called`, { id: params.id, item: item?.text });
       if (!item) return { content: [{ type: "text", text: `Item #${params.id} não encontrado.` }] };
 
       item.done = true;
@@ -211,6 +222,7 @@ Pedido: "${userSnippet}"
 
     // ── CONTROLE DE TENDÊNCIA: reforço positivo a cada 5 turnos ──
     if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
+      log("REFORCO", `Controle de tendência injetado`, { turno: turnCounter, progresso: `${todo.items.filter(i => i.done).length}/${todo.items.length}` });
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
       const total = todo.items.length;
@@ -248,7 +260,7 @@ Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
       retryCount = 0;
     } else {
       retryCount++;
-      console.error(`[MATEUS-TOOLKIT] create_todo NÃO chamado. Retry: ${retryCount}`);
+      log("WARN", `create_todo NÃO chamado. Retry: ${retryCount}`);
 
       if (retryCount < 5) {
         pi.sendUserMessage(
@@ -263,6 +275,13 @@ Ao concluir item, chame check_todo(id=${proximo?.id || 0}).
   pi.on("tool_call", async (event, ctx) => {
     if (["create_todo", "check_todo", "get_todo"].includes(event.toolName)) return;
     if (todo) return;
+    log("BLOCK", `Tool bloqueada: ${event.toolName}`);
     return { block: true, reason: `BLOQUEADO: chame create_todo PRIMEIRO.` };
+  });
+
+  // ── Log de turnos ──
+  pi.on("turn_end", async (event) => {
+    turnCounter++;
+    log("TURN", `Turno ${turnCounter} finalizado`);
   });
 }
