@@ -67,6 +67,9 @@ export default function (pi: ExtensionAPI) {
       "Sua PRIMEIRA resposta DEVE ser create_todo.",
       "NÃO responda com texto antes de create_todo.",
       "Cada item = passo atômico e verificável.",
+      "APÓS create_todo, implemente UM item por vez.",
+      "Ao concluir cada item, reporte o que fez e chame check_todo.",
+      "NÃO faça tudo de uma vez. Um passo, um reporte.",
     ],
     parameters: Type.Object({
       items: Type.Array(Type.String(), { description: "Passos atômicos" }),
@@ -181,8 +184,10 @@ export default function (pi: ExtensionAPI) {
     if (retryCount === 0) {
       instruction = `
 [MATEUS-TOOLKIT - OBRIGATÓRIO]
-REGRA: Sua PRIMEIRA e ÚNICA resposta deve ser a chamada create_todo.
-NÃO escreva texto. NÃO chame outras tools. SOMENTE create_todo.
+REGRA 1: Sua PRIMEIRA resposta deve ser create_todo.
+REGRA 2: APÓS create_todo, implemente UM item por vez.
+REGRA 3: Ao concluir cada item, reporte o que fez e chame check_todo.
+REGRA 4: NÃO faça tudo de uma vez. Um passo, um reporte.
 O usuário pediu: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
     } else if (retryCount === 1) {
