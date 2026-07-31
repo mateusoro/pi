@@ -368,6 +368,11 @@ O usuário pediu: "${userSnippet}"
     );
   });
 
+  // ── agent_settled: debug log ──
+  pi.on("agent_settled", async (_event, ctx) => {
+    log("AGENT_SETTLED", `Agente idle. todo=${!!todo}`);
+  });
+
   // ── Turnos + reforço ──
   pi.on("turn_end", async () => {
     turnCounter++;
