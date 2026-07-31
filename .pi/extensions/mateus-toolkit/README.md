@@ -19,6 +19,41 @@ pi -e .pi/extensions/mateus-toolkit/index.ts
 pi -e .pi/extensions/mateus-toolkit/index.ts -p "crie um arquivo hello.txt"
 ```
 
+## run-terminal-pty (CLI)
+
+Abre o **TUI interativo** do pi num PTY real (via `node-pty`), envia um prompt
+(padrão `oi`) e imprime a saída completa capturada.
+
+O processo roda **na raiz do projeto** (detectada dinamicamente subindo de
+`__dirname` até achar `.pi/extensions`), então o pi **carrega as extensões** da
+pasta automaticamente.
+
+```bash
+# Dentro de .pi/extensions/mateus-toolkit/
+node run-terminal-pty.cjs
+
+# Com opções
+node run-terminal-pty.cjs --prompt "oi" --model "opencode-go/deepseek-v4-flash" --timeout 120
+```
+
+### Requisitos
+
+- `node-pty` instalado localmente (via `package.json` + `npm install`).
+- Pi global instalado (o driver usará `node.exe` + `dist/cli.js` do pi).
+
+### Opções
+
+| Flag | Padrão | Descrição |
+|------|--------|-----------|
+| `--prompt` | `oi` | Texto enviado ao prompt do TUI |
+| `--model` | `opencode-go/deepseek-v4-flash` | Modelo usado pelo pi |
+| `--provider` | `opencode-go` | Provider do modelo |
+| `--timeout` | `120` | Tempo de coleta (s) até fechar o PTY |
+| `--send-at` | `8` | Após quantos segundos enviar o prompt |
+
+Arquivos: `run-terminal-pty.cjs` (driver Node/node-pty) e `package.json`
+(declara a dependência `node-pty` em `node_modules/`).
+
 ## Comandos
 
 | Comando | Descrição |

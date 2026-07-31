@@ -125,15 +125,10 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       const done = todo.items.filter((i) => i.done);
       const proximo = pending.length > 0 ? pending[0] : null;
 
-      // Se tem próximo item, injetar steer pra forçar um item por vez
-      if (proximo) {
-        setTimeout(() => {
-          pi.sendUserMessage(
-            `Item #${item.id} concluído. Agora implemente APENAS o item #${proximo.id}: ${proximo.text}. Ao terminar, chame check_todo(id=${proximo.id}).`,
-            { deliverAs: "steer" }
-          );
-        }, 100);
-      }
+      // Nota: NÃO dispara sendUserMessage aqui. O loop de "Follow-up: Item #N" indefinido
+      // era causado por cada check_todo (e re-marcações) re-triggar um followUp com triggerTurn.
+      // A injeção imediata do próximo item já é feita UMA vez no agent_end (com guard de pendências),
+      // sem cair em re-trigger infinito.
 
       return {
         content: [{
