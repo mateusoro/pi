@@ -244,20 +244,10 @@ Chame create_todo para atualizar o todo conforme a mensagem do usuário.
     if (todo) {
       const pending = todo.items.filter((i) => !i.done);
       if (pending.length > 0) {
-        const proximo = pending[0];
-        const checklist = todo.items.map((item) =>
-          `- [${item.done ? "x" : " "}] #${item.id}. ${item.text}`
-        ).join("\n");
         const instruction = `
 [MATEUS-TOOLKIT - SEGUIR PLANO]
-Você tem um todo ativo com itens pendentes. Sua ÚNICA tarefa é implementar o próximo item.
-Próximo item: #${proximo.id}. ${proximo.text}
-
-Todo atual:
-${checklist}
-
-Chame get_todo() para ver o estado completo, implemente o item, e ao terminar chame check_todo(id=${proximo.id}).
-NÃO responda com texto. NÃO crie novo todo. APENAS implemente o item.`;
+Você tem um todo ativo. Implemente o próximo item pendente.
+Chame get_todo(), implemente, e ao terminar chame check_todo(id=N).`;
         return { systemPrompt: systemPrompt + instruction };
       }
       return { systemPrompt };
