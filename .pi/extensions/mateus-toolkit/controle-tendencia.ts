@@ -266,9 +266,6 @@ O usuário pediu: "${userSnippet}"
     return { systemPrompt: systemPrompt + instruction };
   });
 
-    return { systemPrompt: systemPrompt + instruction };
-  });
-
   // ── tool_call: BLOQUEAR tudo que não é create_todo/check_todo/get_todo ──
   pi.on("tool_call", async (event, ctx) => {
     // Se já criou o todo, permitir check_todo e get_todo
