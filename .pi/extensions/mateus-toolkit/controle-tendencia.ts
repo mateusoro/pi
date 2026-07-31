@@ -291,8 +291,9 @@ O usuário pediu: "${userSnippet}"
   });
 
   // ── agent_end: verificar se create_todo foi chamado ──
+  let steerCount = 0;
   pi.on("agent_end", async (event, ctx) => {
-    if (todoCreatedThisTurn) return;
+    if (todoCreatedThisTurn) { steerCount = 0; return; }
 
     const todoCalled = event.messages.some(
       (m) => m.role === "toolResult" && m.toolName === "create_todo"
@@ -300,6 +301,15 @@ O usuário pediu: "${userSnippet}"
 
     if (todoCalled) {
       todoCreatedThisTurn = true;
+      steerCount = 0;
+      return;
+    }
+
+    // Limitar steer para evitar loop infinito
+    steerCount++;
+    if (steerCount > 3) {
+      log("WARN", `Steer limit atingido (${steerCount}). Aguardando próximo input.`);
+      steerCount = 0;
       return;
     }
 
@@ -314,7 +324,7 @@ O usuário pediu: "${userSnippet}"
       .substring(0, 300) || "(resposta vazia)";
 
     // NÃO criou - forçar com steer (o steer cria mensagem visível no chat)
-    log("WARN", `create_todo NÃO chamado. Resposta errada: "${wrongText.substring(0, 100)}"`);
+    log("WARN", `create_todo NÃO chamado (steer #${steerCount}). Resposta: "${wrongText.substring(0, 100)}"`);
     pi.sendUserMessage(
       `[SISTEMA] Você respondeu: "${wrongText.substring(0, 150)}"\n\nIsso está ERRADO. Você NÃO pode apenas responder texto.\nSua ÚNICA resposta agora DEVE ser create_todo(items=["passo1"], summary="resumo"). NADA MAIS.`,
       { deliverAs: "steer" }
