@@ -325,7 +325,7 @@ O usuário pediu: "${userSnippet}"
           log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer.`);
           pi.sendUserMessage(
             `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
-            { deliverAs: "steer" }
+            { deliverAs: "followUp", triggerTurn: true }
           );
         }
       }
@@ -364,7 +364,7 @@ O usuário pediu: "${userSnippet}"
     log("WARN", `create_todo NÃO chamado (steer #${steerCount}). Resposta: "${wrongText.substring(0, 100)}"`);
     pi.sendUserMessage(
       `[SISTEMA] Você respondeu: "${wrongText.substring(0, 150)}"\n\nIsso está ERRADO. Você NÃO pode apenas responder texto.\nSua ÚNICA resposta agora DEVE ser create_todo(items=["passo1"], summary="resumo"). NADA MAIS.`,
-      { deliverAs: "steer" }
+      { deliverAs: "followUp", triggerTurn: true }
     );
   });
 
