@@ -257,7 +257,15 @@ REGRAS OBRIGATÓRIAS PARA O TODO:
 O usuário pediu: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
 
-    return { systemPrompt: systemPrompt + instruction };
+    // message com display: true APARECE no chat E é enviada ao LLM
+    return {
+      message: {
+        customType: "mateus-force-todo",
+        content: instruction,
+        display: true,
+      },
+      systemPrompt: systemPrompt + instruction,
+    };
   });
 
   // ── tool_call: BLOQUEAR tudo que não é create_todo/check_todo/get_todo ──
