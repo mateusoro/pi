@@ -198,7 +198,7 @@ REGRAS OBRIGATÓRIAS PARA O TODO:
 
 O usuário pediu: "${userSnippet}"
 [/CONTEXTO - CRIAR TODO OBRIGATÓRIO]`;
-      return { action: "continue", text: event.text + forceTodo };
+      return { action: "transform", text: event.text + forceTodo };
     }
 
     // Todo ativo → SEMPRE chamar create_todo pra atualizar o plano
@@ -223,7 +223,7 @@ Progresso: ${done.length}/${total} (${progresso}%).
 O usuário está mandando você corrigir a rota atual. Pare o que está fazendo.
 Chame create_todo para atualizar o todo conforme a mensagem do usuário.
 [/CONTEXTO - PLANO ATIVO - ALTERAÇÃO SOLICITADA]`;
-      return { action: "continue", text: event.text + contextSnippet };
+      return { action: "transform", text: event.text + contextSnippet };
     }
 
     // Todos concluídos
