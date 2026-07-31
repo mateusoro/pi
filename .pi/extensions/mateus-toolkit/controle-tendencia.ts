@@ -257,6 +257,15 @@ REGRAS OBRIGATÓRIAS PARA O TODO:
 O usuário pediu: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
 
+    // Adicionar no chat para o modelo ver que precisa criar o todo
+    pi.appendEntry("mateus-force-todo", {
+      type: "force_create_todo",
+      message: instruction,
+    });
+
+    return { systemPrompt: systemPrompt + instruction };
+  });
+
     return { systemPrompt: systemPrompt + instruction };
   });
 
@@ -303,8 +312,25 @@ O usuário pediu: "${userSnippet}"
       return;
     }
 
-    // NÃO criou - forçar com steer (entrega imediatamente)
-    log("WARN", `create_todo NÃO chamado. Forçando...`);
+    // Extrair a última resposta do modelo (texto que ele gerou em vez de create_todo)
+    const lastAssistant = [...event.messages].reverse().find(
+      (m) => m.role === "assistant"
+    );
+    const wrongText = lastAssistant?.content
+      ?.filter((c: any) => c.type === "text")
+      .map((c: any) => c.text)
+      .join(" ")
+      .substring(0, 300) || "(resposta vazia)";
+
+    // Inserir no histórico para o modelo ver que errou
+    log("WARN", `create_todo NÃO chamado. Inserindo resposta errada no histórico...`);
+    pi.appendEntry("mateus-correction", {
+      type: "failed_attempt",
+      wrongResponse: wrongText,
+      message: `O modelo respondeu: "${wrongText}"\n\nIsso está ERRADO. Você DEVE chamar create_todo, não pode apenas responder texto.`,
+    });
+
+    // Forçar com steer
     pi.sendUserMessage(
       `[SISTEMA] Você NÃO chamou create_todo. Sua ÚNICA resposta agora DEVE ser create_todo(items=["passo1"], summary="resumo"). NADA MAIS.`,
       { deliverAs: "steer" }
