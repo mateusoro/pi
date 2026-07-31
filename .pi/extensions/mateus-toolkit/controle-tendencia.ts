@@ -237,8 +237,31 @@ Chame create_todo para atualizar o todo conforme a mensagem do usuário.
   pi.on("before_agent_start", async (event, ctx) => {
     const systemPrompt = ctx.getSystemPrompt();
 
-    // Se já criou o todo neste turno OU já existe todo ativo, não injeta
-    if (todoCreatedThisTurn || todo) return { systemPrompt };
+    // Se já criou o todo neste turno, não injeta
+    if (todoCreatedThisTurn) return { systemPrompt };
+
+    // Se existe todo ativo com itens pendentes, injetar instrução para seguir o plano
+    if (todo) {
+      const pending = todo.items.filter((i) => !i.done);
+      if (pending.length > 0) {
+        const proximo = pending[0];
+        const checklist = todo.items.map((item) =>
+          `- [${item.done ? "x" : " "}] #${item.id}. ${item.text}`
+        ).join("\n");
+        const instruction = `
+[MATEUS-TOOLKIT - SEGUIR PLANO]
+Você tem um todo ativo com itens pendentes. Sua ÚNICA tarefa é implementar o próximo item.
+Próximo item: #${proximo.id}. ${proximo.text}
+
+Todo atual:
+${checklist}
+
+Chame get_todo() para ver o estado completo, implemente o item, e ao terminar chame check_todo(id=${proximo.id}).
+NÃO responda com texto. NÃO crie novo todo. APENAS implemente o item.`;
+        return { systemPrompt: systemPrompt + instruction };
+      }
+      return { systemPrompt };
+    }
 
     const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
 
@@ -296,11 +319,12 @@ O usuário pediu: "${userSnippet}"
 
   // ── agent_end: verificar se create_todo foi chamado ──
   let steerCount = 0;
+
   pi.on("agent_end", async (event, ctx) => {
     if (todoCreatedThisTurn) {
       steerCount = 0;
 
-      // Se tem todo ativo com itens pendentes, injetar steer para atualizar
+      // Se tem todo ativo com itens pendentes, injetar steer
       if (todo) {
         const pending = todo.items.filter((i) => !i.done);
         if (pending.length > 0) {
@@ -308,14 +332,10 @@ O usuário pediu: "${userSnippet}"
             `- [${item.done ? "x" : " "}] #${item.id}. ${item.text}`
           ).join("\n");
           const proximo = pending[0];
-          log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer para continuação.`);
-          pi.sendMessage(
-            {
-              customType: "mateus-continue",
-              content: `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
-              display: true,
-            },
-            { deliverAs: "steer", triggerTurn: true }
+          log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer.`);
+          pi.sendUserMessage(
+            `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
+            { deliverAs: "steer" }
           );
         }
       }
