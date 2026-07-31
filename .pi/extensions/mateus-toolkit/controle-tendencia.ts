@@ -309,9 +309,13 @@ O usuário pediu: "${userSnippet}"
           ).join("\n");
           const proximo = pending[0];
           log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer para continuação.`);
-          pi.sendUserMessage(
-            `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
-            { deliverAs: "followUp" }
+          pi.sendMessage(
+            {
+              customType: "mateus-continue",
+              content: `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
+              display: true,
+            },
+            { deliverAs: "steer", triggerTurn: true }
           );
         }
       }
