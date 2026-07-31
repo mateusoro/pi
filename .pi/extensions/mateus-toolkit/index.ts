@@ -6,8 +6,7 @@ import { registerWebSearch } from "./websearch.ts";
 import { registerPermissionGate } from "./permission-gate.ts";
 import { registerQualityMonitor } from "./quality-monitor.ts";
 import { registerShellSession } from "./shell-session.ts";
-import { registerAddNewModel, registerAllSavedProviders } from "./add-new-model.ts";
-import { registerLmStudioProvider } from "./lmstudio-provider.ts";
+import { registerAddNewModel } from "./add-new-model.ts";
 
 /**
  * mateus-toolkit - Extensão modular
@@ -20,7 +19,6 @@ import { registerLmStudioProvider } from "./lmstudio-provider.ts";
  *   - quality-monitor: anti-loop, detecta respostas repetidas
  *   - shell-session: sessão bash persistente com timeout
  *   - add-new-model: configurar provider OpenAI-like
- *   - lmstudio-provider:provider local do LM Studio
  */
 
 export default async function (pi: ExtensionAPI) {
@@ -33,8 +31,6 @@ export default async function (pi: ExtensionAPI) {
   registerQualityMonitor(pi);
   registerShellSession(pi);
   registerAddNewModel(pi);
-  registerAllSavedProviders(pi); // Carrega providers salvos do providers.json
-  await registerLmStudioProvider(pi);
 
   log("INFO", "All modules registered");
 }
