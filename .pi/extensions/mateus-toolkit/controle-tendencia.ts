@@ -234,8 +234,8 @@ Chame create_todo para atualizar o todo conforme a mensagem do usuário.
   pi.on("before_agent_start", async (event, ctx) => {
     const systemPrompt = ctx.getSystemPrompt();
 
-    // Se já criou o todo neste turno, não injeta
-    if (todoCreatedThisTurn) return { systemPrompt };
+    // Se já criou o todo neste turno OU já existe todo ativo, não injeta
+    if (todoCreatedThisTurn || todo) return { systemPrompt };
 
     const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
 
@@ -306,6 +306,7 @@ O usuário pediu: "${userSnippet}"
           ).join("\n");
           const proximo = pending[0];
           log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer para continuação.`);
+          todoCreatedThisTurn = false; // Resetar para before_agent_start injetar instrução no próximo turno
           pi.sendUserMessage(
             `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
             { deliverAs: "steer" }
