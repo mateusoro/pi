@@ -173,7 +173,10 @@ export function registerControleTendencia(pi: ExtensionAPI) {
 
   // ── Capturar input + injetar prompt junto com a mensagem ──
   pi.on("input", async (event, ctx) => {
+    // Pular comandos, steers do próprio toolkit, e mensagens de outros módulos
     if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
+    // Pular steers/followUps internos (controle de tendência, quality monitor)
+    if (event.text.startsWith("[SISTEMA]") || event.text.startsWith("[ALINHAMENTO")) return { action: "continue" };
     lastUserMessage = event.text;
     todoCreatedThisTurn = false;
     turnCounter = 0;
@@ -306,10 +309,9 @@ O usuário pediu: "${userSnippet}"
           ).join("\n");
           const proximo = pending[0];
           log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer para continuação.`);
-          todoCreatedThisTurn = false; // Resetar para before_agent_start injetar instrução no próximo turno
           pi.sendUserMessage(
             `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
-            { deliverAs: "steer" }
+            { deliverAs: "followUp" }
           );
         }
       }
