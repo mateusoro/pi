@@ -25,6 +25,7 @@ export function registerControleTendencia(pi: ExtensionAPI) {
   let turnCounter = 0;
   let lastUserMessage = "";
   let todoCreatedThisTurn = false;
+  let externalToolCallCount = 0;
 
   pi.on("session_start", async (_event, ctx) => {
     log("INFO", "Controle de tendência: session started", { reason: _event.reason });
@@ -33,6 +34,7 @@ export function registerControleTendencia(pi: ExtensionAPI) {
     turnCounter = 0;
     lastUserMessage = "";
     todoCreatedThisTurn = false;
+    externalToolCallCount = 0;
 
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom") {
@@ -62,6 +64,7 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       "Se não sabe sobre o assunto, PRIMEIRO item DEVE ser 'Pesquisar sobre [assunto]'.",
       "Se não conhece uma API/lib, PRIMEIRO item DEVE ser 'Verificar documentação de [API/lib]'.",
       "O resumo DEVE conter apenas fatos que você tem certeza. Se incerto, diga 'a ser verificado'.",
+      "Altere APENAS o que foi explicitamente solicitado pelo usuário. NÃO modifique arquivos, configs ou código não relacionado ao pedido.",
     ],
     parameters: Type.Object({
       items: Type.Array(Type.String(), { description: "Passos atômicos" }),
@@ -71,12 +74,23 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       log("INFO", "create_todo called", { items: params.items.length });
       todoCreatedThisTurn = true;
       turnCounter = 0;
+      externalToolCallCount = 0;
 
       const newTodo: TodoList = {
         items: params.items.map((text, i) => ({ id: i + 1, text, done: false })),
         nextId: params.items.length + 1,
         createdAt: Date.now(),
       };
+
+      // Adicionar item de diff como último item (hardcoded)
+      const diffItemId = newTodo.items.length + 1;
+      newTodo.items.push({ id: diffItemId, text: "Apresentar diff resumido do que foi corrigido/implementado", done: false });
+      newTodo.nextId = diffItemId + 1;
+
+      // Adicionar item de diff como último item (hardcoded)
+      const diffItemId = newTodo.items.length + 1;
+      newTodo.items.push({ id: diffItemId, text: "Apresentar diff resumido do que foi corrigido/implementado", done: false });
+      newTodo.nextId = diffItemId + 1;
       const newSummary: Summary = { text: params.summary, createdAt: Date.now() };
 
       todo = newTodo;
@@ -108,6 +122,7 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       if (!item) return { content: [{ type: "text", text: `Item #${params.id} não encontrado.` }] };
 
       item.done = true;
+      externalToolCallCount = 0; // reseta ao concluir item
       pi.appendEntry("mateus-todo", { ...todo });
 
       const pending = todo.items.filter((i) => !i.done);
@@ -160,12 +175,62 @@ export function registerControleTendencia(pi: ExtensionAPI) {
     },
   });
 
-  // ── Capturar input ──
+  // ── Capturar input + injetar prompt junto com a mensagem ──
   pi.on("input", async (event, ctx) => {
     if (event.text.startsWith("/") || event.source === "extension") return { action: "continue" };
     lastUserMessage = event.text;
     todoCreatedThisTurn = false;
     turnCounter = 0;
+    externalToolCallCount = 0;
+
+    // Sem todo ativo → forçar criação do todo
+    if (!todo) {
+      const userSnippet = event.text.substring(0, 200).replace(/"/g, '\\"');
+      const forceTodo = `
+[CONTEXTO - CRIAR TODO OBRIGATÓRIO]
+SUA ÚNICA RESPOSTA DEVE SER create_todo(items=["passo1","passo2"...], summary="resumo").
+NÃO escreva texto. NÃO chame OUTRAS tools.
+
+REGRAS OBRIGATÓRIAS PARA O TODO:
+1. NUNCA invente dados. Use apenas fatos reais e verificáveis.
+2. Se NÃO sabe sobre o assunto: PRIMEIRO item = "Pesquisar sobre [assunto]".
+3. Se NÃO conhece uma API/lib: PRIMEIRO item = "Verificar documentação de [API/lib]".
+4. Se tem DÚVIDA sobre algo: inclua item "Verificar/validar [dúvida]".
+5. O resumo DEVE conter apenas certezas. Se incerto, diga "a ser verificado".
+6. NUNCA presupuna que algo funciona sem ter verificado.
+7. Altere APENAS o que foi explicitamente solicitado pelo usuário. NÃO modifique arquivos, configs ou código não relacionado ao pedido.
+
+O usuário pediu: "${userSnippet}"
+[/CONTEXTO - CRIAR TODO OBRIGATÓRIO]`;
+      return { action: "continue", text: event.text + forceTodo };
+    }
+
+    // Todo ativo → SEMPRE chamar create_todo pra atualizar o plano
+    const pending = todo.items.filter((i) => !i.done);
+    const done = todo.items.filter((i) => i.done);
+    const proximo = pending.length > 0 ? pending[0] : null;
+    const total = todo.items.length;
+    const progresso = total > 0 ? Math.round((done.length / total) * 100) : 0;
+
+    if (proximo) {
+      const checklist = todo.items.map((item) =>
+        `[${item.done ? "x" : " "}] #${item.id}. ${item.text}`
+      ).join("\n");
+
+      const contextSnippet = `
+[CONTEXTO - PLANO ATIVO - ALTERAÇÃO SOLICITADA]
+TODO atual:
+${checklist}
+
+Progresso: ${done.length}/${total} (${progresso}%).
+
+O usuário está mandando você corrigir a rota atual. Pare o que está fazendo.
+Chame create_todo para atualizar o todo conforme a mensagem do usuário.
+[/CONTEXTO - PLANO ATIVO - ALTERAÇÃO SOLICITADA]`;
+      return { action: "continue", text: event.text + contextSnippet };
+    }
+
+    // Todos concluídos
     return { action: "continue" };
   });
 
@@ -191,6 +256,7 @@ REGRAS OBRIGATÓRIAS PARA O TODO:
 4. Se tem DÚVIDA sobre algo: inclua item "Verificar/validar [dúvida]".
 5. O resumo DEVE conter apenas certezas. Se incerto, diga "a ser verificado".
 6. NUNCA presupuna que algo funciona sem ter verificado.
+7. Altere APENAS o que foi explicitamente solicitado pelo usuário. NÃO modifique arquivos, configs ou código não relacionado ao pedido.
 
 O usuário pediu: "${userSnippet}"
 [/MATEUS-TOOLKIT]`;
@@ -207,14 +273,25 @@ O usuário pediu: "${userSnippet}"
       return;
     }
 
-    // Se NÃO criou o todo, bloquear TUDO exceto create_todo
+    // Se NÃO criou o todo, bloquear TUDO exceto create_todo e add_new_model
     if (event.toolName === "create_todo") return;
+    if (event.toolName === "add_new_model") return;
 
     log("BLOCK", `Tool bloqueada (sem todo): ${event.toolName}`);
     return {
       block: true,
       reason: `BLOQUEADO: Você NÃO pode usar ${event.toolName}. CHAME create_todo PRIMEIRO.`,
     };
+  });
+
+  // ── Contador de tools externas: buscar internet após 10 chamadas ──
+  const INTERNAL_TOOLS = ["create_todo", "check_todo", "get_todo", "websearch", "webfetch"];
+
+  pi.on("tool_call", async (event) => {
+    if (!todo) return;
+    if (INTERNAL_TOOLS.includes(event.toolName)) return;
+    externalToolCallCount++;
+    log("TOOL_COUNT", `Tool externa #${externalToolCallCount}: ${event.toolName}`);
   });
 
   // ── agent_end: verificar se create_todo foi chamado ──
@@ -244,7 +321,7 @@ O usuário pediu: "${userSnippet}"
     log("TURN", `Turno ${turnCounter} finalizado`);
 
     // Reforço a cada 5 turnos (se tem todo e tem itens pendentes)
-    if (turnCounter > 0 && turnCounter % 5 === 0 && todo) {
+    if (turnCounter > 0 && turnCounter % 10 === 0 && todo) {
       const pending = todo.items.filter((i) => !i.done);
       const done = todo.items.filter((i) => i.done);
       const total = todo.items.length;
@@ -261,11 +338,11 @@ O usuário pediu: "${userSnippet}"
       log("REFORCO", `Reforço injetado`, { turno: turnCounter, progresso: `${done.length}/${total}` });
 
       pi.sendUserMessage(
-        `[REFORÇO — TURNO ${turnCounter}]
+        `[ALINHAMENTO CONFORME PLANO — TURNO ${turnCounter}]
 Progresso: ${done.length}/${total} (${progresso}%).
-Próximo: #${proximo.id}. ${proximo.text}
-Siga o plano. Ao concluir, chame check_todo(id=${proximo.id}).
-[/REFORÇO]`,
+ATUAL SENDO REALIZADO: #${proximo.id}. ${proximo.text}
+Siga o plano, se precisar mudar algo, chame create_todo para alterar o plano. Ao concluir, chame check_todo(id=${proximo.id}).
+[/ALINHAMENTO CONFORME PLANO]`,
         { deliverAs: "steer" }
       );
     }

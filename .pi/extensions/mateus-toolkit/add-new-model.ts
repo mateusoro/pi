@@ -1,13 +1,76 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { execSync } from "node:child_process";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "./logger.ts";
 
 // add-new-model - Configurar novo provider OpenAI-like
 //
-// Testa com curl primeiro, depois fornece config pro settings.json
+// Testa com curl, registra com pi.registerProvider() e salva para persistência
+
+const PROVIDERS_FILE = join(process.env.USERPROFILE || process.env.HOME || ".", ".pi", "agent", "providers.json");
+
+interface SavedProvider {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  api: string;
+  models: Array<{
+    id: string;
+    name: string;
+    reasoning: boolean;
+    input: string[];
+    cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+    contextWindow: number;
+    maxTokens: number;
+  }>;
+}
+
+function loadSavedProviders(): SavedProvider[] {
+  if (!existsSync(PROVIDERS_FILE)) return [];
+  try {
+    const raw = readFileSync(PROVIDERS_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+function saveProvider(provider: SavedProvider) {
+  const providers = loadSavedProviders();
+  const idx = providers.findIndex((p) => p.name === provider.name);
+  if (idx >= 0) {
+    providers[idx] = provider;
+  } else {
+    providers.push(provider);
+  }
+  writeFileSync(PROVIDERS_FILE, JSON.stringify(providers, null, 2), "utf-8");
+  log("INFO", "Provider salvo em providers.json", { name: provider.name });
+}
+
+function registerProviderFromConfig(pi: ExtensionAPI, provider: SavedProvider) {
+  try {
+    pi.registerProvider(provider.name, {
+      name: provider.name,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      api: provider.api as any,
+      models: provider.models,
+    });
+    log("INFO", "Provider registrado via pi.registerProvider", { name: provider.name });
+  } catch (e: any) {
+    log("WARN", "Falha ao registrar provider", { name: provider.name, error: e.message });
+  }
+}
+
+// Registrar todos os providers salvos (chamado no startup)
+export function registerAllSavedProviders(pi: ExtensionAPI) {
+  const providers = loadSavedProviders();
+  for (const p of providers) {
+    registerProviderFromConfig(pi, p);
+  }
+}
 
 export function registerAddNewModel(pi: ExtensionAPI) {
   log("INFO", "Add new model loaded");
@@ -23,9 +86,10 @@ export function registerAddNewModel(pi: ExtensionAPI) {
       api_key: Type.String({ description: "Chave da API" }),
       model_id: Type.String({ description: "ID do modelo (ex: gpt-4, qwen3.7-plus)" }),
       provider_name: Type.Optional(Type.String({ description: "Nome do provider (padrão: custom)" })),
+      context_window: Type.Optional(Type.Number({ description: "Tamanho da janela de contexto em tokens (padrão: 128000)" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { url, api_key, model_id, provider_name } = params;
+      const { url, api_key, model_id, provider_name, context_window } = params;
       const name = provider_name || "custom";
 
       log("INFO", "add_new_model called", { url, model_id, provider: name, keyLen: api_key.length, keyStart: api_key.substring(0, 10) });
@@ -98,46 +162,44 @@ export function registerAddNewModel(pi: ExtensionAPI) {
         };
       }
 
-      // 3. Teste OK - gerar config do settings.json
-      const config = {
-        [name]: {
-          baseUrl: url,
-          apiKey: api_key,
-          api: "openai-completions",
-          models: [{
-            id: model_id,
-            name: model_id,
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 128000,
-            maxTokens: 4096,
-          }],
-        },
+      // 3. Teste OK - registrar provider e salvar para persistência
+      const providerConfig: SavedProvider = {
+        name,
+        baseUrl: url,
+        apiKey: api_key,
+        api: "openai-completions",
+        models: [{
+          id: model_id,
+          name: model_id,
+          reasoning: false,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: context_window || 256000,
+          maxTokens: 4096,
+        }],
       };
 
-      const settingsPath = `${process.env.USERPROFILE || process.env.HOME}/.pi/agent/settings.json`;
+      // Registrar imediatamente na sessão atual
+      registerProviderFromConfig(pi, providerConfig);
+
+      // Salvar para persistência (carregado no próximo startup)
+      saveProvider(providerConfig);
 
       return {
         content: [{
           type: "text",
           text: [
-            `✅ Teste OK! Modelo ${model_id} funcionou.`,
+            `✅ Provider "${name}" adicionado com sucesso!`,
             '',
             `URL: ${url}`,
-            `Provider: ${name}`,
+            `Modelo: ${model_id}`,
             `Resposta: "${testOutput}"`,
             '',
-            'Para adicionar, edite settings.json:',
-            '',
-            '```json',
-            JSON.stringify({ providers: config }, null, 2),
-            '```',
-            '',
-            `Ou use /settings no pi interativo.`,
+            `O provider já está disponível nesta sessão.`,
+            `Para usar em sessões futuras, reinicie o pi.`,
           ].join('\n'),
         }],
-        details: { success: true, url, model_id, provider: name, response: testOutput, config },
+        details: { success: true, url, model_id, provider: name, response: testOutput, config: providerConfig },
       };
     },
   });
