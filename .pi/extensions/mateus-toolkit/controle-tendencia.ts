@@ -294,7 +294,26 @@ O usuário pediu: "${userSnippet}"
   // ── agent_end: verificar se create_todo foi chamado ──
   let steerCount = 0;
   pi.on("agent_end", async (event, ctx) => {
-    if (todoCreatedThisTurn) { steerCount = 0; return; }
+    if (todoCreatedThisTurn) {
+      steerCount = 0;
+
+      // Se tem todo ativo com itens pendentes, injetar steer para atualizar
+      if (todo) {
+        const pending = todo.items.filter((i) => !i.done);
+        if (pending.length > 0) {
+          const checklist = todo.items.map((item) =>
+            `- [${item.done ? "x" : " "}] #${item.id}. ${item.text}`
+          ).join("\n");
+          const proximo = pending[0];
+          log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer para continuação.`);
+          pi.sendUserMessage(
+            `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
+            { deliverAs: "steer" }
+          );
+        }
+      }
+      return;
+    }
 
     const todoCalled = event.messages.some(
       (m) => m.role === "toolResult" && m.toolName === "create_todo"
