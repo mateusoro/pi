@@ -87,10 +87,6 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       newTodo.items.push({ id: diffItemId, text: "Apresentar diff resumido do que foi corrigido/implementado", done: false });
       newTodo.nextId = diffItemId + 1;
 
-      // Adicionar item de diff como último item (hardcoded)
-      const diffItemId = newTodo.items.length + 1;
-      newTodo.items.push({ id: diffItemId, text: "Apresentar diff resumido do que foi corrigido/implementado", done: false });
-      newTodo.nextId = diffItemId + 1;
       const newSummary: Summary = { text: params.summary, createdAt: Date.now() };
 
       todo = newTodo;
