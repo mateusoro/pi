@@ -72,10 +72,11 @@ export function registerBrain(pi: ExtensionAPI) {
         ),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_id, params, _signal, _onUpdate, ctx) {
       const messages: string[] = [];
       const result = criarPage(params.md, params.tipo ?? "pesquisa", params.palavrasChave ?? [], {
         logger: (m) => messages.push(m),
+        cwd: ctx.cwd,
       });
       return {
         content: [

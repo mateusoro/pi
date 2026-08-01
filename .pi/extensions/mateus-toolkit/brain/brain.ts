@@ -351,6 +351,40 @@ export function normalizeGitUrl(url: string): string {
 }
 
 /**
+ * Extrai a URL do repositório git da pasta atual (remote origin; fallback:
+ * primeiro remote do repo). Retorna null se a pasta não for um repo git.
+ */
+export function getGitRemoteFromCwd(cwd: string): string | null {
+  const remoteUrl = (remote: string): string | null => {
+    try {
+      const out = execSync(`git config --get remote.${remote}.url`, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      return out ? normalizeGitUrl(out) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const origin = remoteUrl("origin");
+  if (origin) return origin;
+
+  // fallback: primeiro remote do repo (caso não exista origin)
+  try {
+    const out = execSync(`git remote`, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    const first = out.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+    if (first) return remoteUrl(first);
+  } catch { /* não é repo git */ }
+  return null;
+}
+
+/**
  * Extrai a URL de um repositório git do markdown (github/gitlab/bitbucket, http ou ssh).
  * Retorna null se não encontrar.
  */
@@ -590,7 +624,7 @@ export function criarPage(
   md: string,
   tipo: "pesquisa" | "codigo" = "pesquisa",
   palavrasChave: string[] = [],
-  opts: { logger?: (m: string) => void; metadata?: MetadataInfo } = {},
+  opts: { logger?: (m: string) => void; metadata?: MetadataInfo; cwd?: string; gitUrl?: string | null } = {},
 ): CriarPageResult {
   const log = opts.logger ?? ((m: string) => console.log(m));
   const keywords = palavrasChave.map((k) => k.trim()).filter(Boolean);
@@ -624,7 +658,8 @@ export function criarPage(
   const schema = ensureIndexSchema(log);
   if (!schema.ok) log(`[schema] ⚠️ ${schema.message}`);
 
-  const gitUrl = extractGitUrl(md);
+  // git: explicitamente informado > extraído da pasta atual (remote) > extraído do markdown
+  const gitUrl = opts.gitUrl ?? (opts.cwd ? getGitRemoteFromCwd(opts.cwd) : null) ?? extractGitUrl(md);
 
   // === tipo "pesquisa": 1 página por sessão (Session é o id da pesquisa) ===
   // Se já existe na sessão, ANEXA o novo md no final da anterior; senão cria.
@@ -649,36 +684,62 @@ export function criarPage(
     }
   }
 
-  // === tipo "codigo": valida o git — se já existe anotação, ATUALIZA ===
+  // === tipo "codigo": 1º complementa no git (pasta atual/md), 2º complementa na sessão, senão cria ===
   if (tipo === "codigo") {
+    // 1. verifica o github e complementa na página que já tem essa anotação
     if (gitUrl) {
       const existing = findPageByGitUrl(dsId, gitUrl);
       if (existing) {
-        const contentOk = editPageContent(existing, withMetadata(md, opts.metadata));
+        const res = appendToPage(existing, withMetadata(md, opts.metadata), keywords);
         const props: Record<string, unknown> = {
           Tipo: { select: { name: "codigo" } },
           Git: { url: gitUrl },
         };
-        const title = extractTitle(md);
-        if (title) props.Nome = { title: [{ text: { content: title } }] };
-        if (keywords.length) props.Tags = { multi_select: keywords.map((name) => ({ name })) };
+        if (sessionId) props.Session = { rich_text: [{ text: { content: sessionId } }] };
         const propsOk = setPageProperties(existing, props);
-        log(`[criar_page] 🔄 git já anotado no brain (${gitUrl}) → página ${existing} atualizada (conteúdo: ${contentOk}, props: ${propsOk})`);
+        log(`[criar_page] 🔄 git já anotado no brain (${gitUrl}) → complementado na página ${existing} (${res.message}, props: ${propsOk})`);
         return {
-          ok: contentOk && propsOk,
+          ok: res.ok && propsOk,
           pageId: existing,
           url: null,
           title: null,
           dsId,
           tipo,
           gitUrl,
+          sessionId,
           palavrasChave: keywords,
           updated: true,
-          message: `Git já anotado no brain — página ${existing} atualizada.`,
+          message: `Git já anotado no brain — conteúdo complementado na página ${existing}.`,
         };
       }
     }
-    log(`[criar_page] 🆕 código sem anotação prévia${gitUrl ? ` (${gitUrl})` : " (sem git detectado no md)"} → criando nova página`);
+    // 2. mesmo session do pi: complementa na página da sessão (como na pesquisa)
+    if (sessionId) {
+      const existing = findPageBySessionId(dsId, sessionId);
+      if (existing) {
+        const res = appendToPage(existing, withMetadata(md, opts.metadata), keywords);
+        const props: Record<string, unknown> = {
+          Tipo: { select: { name: "codigo" } },
+        };
+        if (gitUrl) props.Git = { url: gitUrl };
+        const propsOk = setPageProperties(existing, props);
+        log(`[criar_page] 🔄 código sem git anotado, mas mesma sessão (${sessionId}) → complementado na página ${existing} (${res.message}, props: ${propsOk})`);
+        return {
+          ok: res.ok && propsOk,
+          pageId: existing,
+          url: null,
+          title: null,
+          dsId,
+          tipo,
+          gitUrl,
+          sessionId,
+          palavrasChave: keywords,
+          updated: true,
+          message: `Mesma sessão do pi — conteúdo complementado na página ${existing}.`,
+        };
+      }
+    }
+    log(`[criar_page] 🆕 código sem anotação prévia${gitUrl ? ` (${gitUrl})` : " (sem git detectado na pasta/md)"} → criando nova página`);
   }
 
   // === criação (pesquisa sempre passa por aqui; código quando não há anotação) ===

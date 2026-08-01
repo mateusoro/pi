@@ -161,8 +161,8 @@ export async function runDocumentador(ctx: ExtensionContext, input: Documentador
     model: ctx.model?.id ?? null,
   };
 
-  // chamada automática ao criar_page (metadata + 1 página por sessão + indexação + tipo)
-  const r = criarPage(cleanMd, tipo, keywords, { metadata });
+  // chamada automática ao criar_page (metadata + 1 página por sessão + indexação + tipo + git da pasta atual)
+  const r = criarPage(cleanMd, tipo, keywords, { metadata, cwd: ctx.cwd });
   if (!r.ok) {
     log("ERROR", "documentador: criar_page falhou", { error: r.message });
     return { ok: false, pageId: null, url: null, error: r.message, mdPreview: cleanMd.slice(0, 120) };
