@@ -375,25 +375,58 @@ O usuário pediu: "${userSnippet}"
             judgeRetryCount = 0;
             log("INFO", "JUIZ: ATENDEU. Entregando e parando o chat.");
 
-            // ── ENTREGA FINAL AUTOMATIZADA ──
+            // ── ENTREGA FINAL AUTOMATIZADA (em background no TUI) ──
             // Só inicia DEPOIS do juiz retornar positivo (ATENDEU).
-            // Se o juiz deu erro ou NAO_ATENDEU, este bloco não executa.
-            try {
-              const docResult = await runDocumentador(ctx, {
+            // No chat interativo (tui) roda em segundo plano SEM segurar o chat:
+            // o usuário pode mandar a próxima pergunta enquanto o documentador
+            // trabalha e, ao terminar, apenas avisa. Em modos one-shot (print/rpc/
+            // json) mantém o await para a entrega terminar antes do processo sair.
+            if (ctx.mode === "tui") {
+              ctx.ui.notify("Juiz aprovou. Documentando a entrega no brain em segundo plano...", "info");
+              const docInput = {
                 userMessage: lastUserMessage,
                 todoText,
                 lastAssistantMessages: getLastAssistantMessages(ctx, 3),
-              });
-              if (docResult.ok) {
-                log("INFO", "DOCUMENTADOR: entrega materializada no brain", {
-                  pageId: docResult.pageId,
-                  url: docResult.url,
+              };
+              void (async () => {
+                try {
+                  const docResult = await runDocumentador(ctx, docInput, { background: true });
+                  if (docResult.ok) {
+                    log("INFO", "DOCUMENTADOR: entrega materializada no brain", {
+                      pageId: docResult.pageId,
+                      url: docResult.url,
+                    });
+                    ctx.ui.notify(
+                      `Entrega documentada no brain${docResult.url ? `: ${docResult.url}` : ` (page ${docResult.pageId})`}`,
+                      "info",
+                    );
+                  } else {
+                    log("WARN", "DOCUMENTADOR: não criou página", { error: docResult.error });
+                    ctx.ui.notify(`Documentador: ${docResult.error}`, "warning");
+                  }
+                } catch (e) {
+                  log("ERROR", "DOCUMENTADOR: falha ao rodar", { error: (e as Error).message });
+                  ctx.ui.notify(`Documentador falhou: ${(e as Error).message}`, "error");
+                }
+              })();
+            } else {
+              try {
+                const docResult = await runDocumentador(ctx, {
+                  userMessage: lastUserMessage,
+                  todoText,
+                  lastAssistantMessages: getLastAssistantMessages(ctx, 3),
                 });
-              } else {
-                log("WARN", "DOCUMENTADOR: não criou página", { error: docResult.error });
+                if (docResult.ok) {
+                  log("INFO", "DOCUMENTADOR: entrega materializada no brain", {
+                    pageId: docResult.pageId,
+                    url: docResult.url,
+                  });
+                } else {
+                  log("WARN", "DOCUMENTADOR: não criou página", { error: docResult.error });
+                }
+              } catch (e) {
+                log("ERROR", "DOCUMENTADOR: falha ao rodar", { error: (e as Error).message });
               }
-            } catch (e) {
-              log("ERROR", "DOCUMENTADOR: falha ao rodar", { error: (e as Error).message });
             }
             return;
           }

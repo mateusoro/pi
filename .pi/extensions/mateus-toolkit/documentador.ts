@@ -69,7 +69,11 @@ export function getLastAssistantMessages(ctx: ExtensionContext, count = 3): stri
 }
 
 /** Roda o micro-agente documentador usando o modelo ativo (ctx.model) — padrão do juiz. */
-export async function runDocumentador(ctx: ExtensionContext, input: DocumentadorInput): Promise<DocumentadorResult> {
+export async function runDocumentador(
+  ctx: ExtensionContext,
+  input: DocumentadorInput,
+  opts: { background?: boolean } = {},
+): Promise<DocumentadorResult> {
   if (!ctx.model) {
     return { ok: false, pageId: null, url: null, error: "Nenhum modelo ativo (ctx.model undefined)." };
   }
@@ -102,7 +106,8 @@ export async function runDocumentador(ctx: ExtensionContext, input: Documentador
         apiKey: auth.apiKey,
         headers: auth.headers,
         env: auth.env,
-        signal: ctx.signal,
+        // em background não usa o signal do turno (seria abortado quando o chat finaliza)
+        signal: opts.background ? undefined : ctx.signal,
         cacheRetention: "none",
         sessionId: uuidv7(),
         timeoutMs: 120_000,
