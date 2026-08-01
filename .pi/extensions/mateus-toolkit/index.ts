@@ -9,6 +9,7 @@ import { registerPermissionGate } from "./permission-gate.ts";
 import { registerQualityMonitor } from "./quality-monitor.ts";
 import { registerShellSession } from "./shell-session.ts";
 import { registerAddNewModel } from "./add-new-model.ts";
+import { registerBrain } from "./brain/index.ts";
 
 /**
  * mateus-toolkit - Extensão modular
@@ -23,6 +24,7 @@ import { registerAddNewModel } from "./add-new-model.ts";
  *   - quality-monitor: anti-loop, detecta respostas repetidas
  *   - shell-session: sessão bash persistente com timeout
  *   - add-new-model: configurar provider OpenAI-like
+ *   - brain: MegaBrains no Notion via ntn CLI (brain_bootstrap + futuros módulos)
  */
 
 export default async function (pi: ExtensionAPI) {
@@ -37,6 +39,7 @@ export default async function (pi: ExtensionAPI) {
   registerQualityMonitor(pi);
   registerShellSession(pi);
   registerAddNewModel(pi);
+  registerBrain(pi);
 
   log("INFO", "All modules registered");
 }

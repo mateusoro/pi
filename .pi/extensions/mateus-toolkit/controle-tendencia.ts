@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { log } from "./logger.ts";
 import { runJuiz, getLastAssistantMessages, buildJudgeRetryMessage } from "./juiz.ts";
+import { runDocumentador } from "./documentador.ts";
 
 interface TodoItem {
   id: number;
@@ -373,6 +374,27 @@ O usuário pediu: "${userSnippet}"
           if (judgeResult.status === "atendeu") {
             judgeRetryCount = 0;
             log("INFO", "JUIZ: ATENDEU. Entregando e parando o chat.");
+
+            // ── ENTREGA FINAL AUTOMATIZADA ──
+            // Só inicia DEPOIS do juiz retornar positivo (ATENDEU).
+            // Se o juiz deu erro ou NAO_ATENDEU, este bloco não executa.
+            try {
+              const docResult = await runDocumentador(ctx, {
+                userMessage: lastUserMessage,
+                todoText,
+                lastAssistantMessages: getLastAssistantMessages(ctx, 3),
+              });
+              if (docResult.ok) {
+                log("INFO", "DOCUMENTADOR: entrega materializada no brain", {
+                  pageId: docResult.pageId,
+                  url: docResult.url,
+                });
+              } else {
+                log("WARN", "DOCUMENTADOR: não criou página", { error: docResult.error });
+              }
+            } catch (e) {
+              log("ERROR", "DOCUMENTADOR: falha ao rodar", { error: (e as Error).message });
+            }
             return;
           }
 

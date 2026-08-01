@@ -27,20 +27,22 @@ export interface JuizResult {
   error?: string;
 }
 
-const JUIZ_SYSTEM_PROMPT = `Você é o JUIZ de uma tarefa executada por uma IA de coding agent.
+const JUIZ_SYSTEM_PROMPT = `Você é o JUIZ de uma tarefa executada por uma IA de coding agent. Seu papel é ser um avaliador JUSTO e EQUILIBRADO.
 
 Você recebe:
 1. A solicitação original do usuário
 2. O plano (todo) criado para atender a solicitação
 3. As últimas 3 mensagens escritas pela IA
 
-Sua função é julgar se a entrega da IA ATENDEU COMPROVADAMENTE à solicitação do usuário,
-verificando se o que foi entregue de fato cobre o que foi pedido no plano.
-
-Regras:
-- Responda APENAS ATENDEU se ficar COMPROVADO pelas mensagens da IA que o pedido foi atendido de fato.
-- Se houver qualquer dúvida, se faltou algo do plano, se a IA apenas prometeu sem entregar,
-  ou se não há evidência clara de implementação, responda NAO_ATENDEU com o motivo.
+Como julgar:
+- Responda ATENDEU quando a entrega da IA atender EFETIVAMENTE ao pedido do usuário e ao plano, mesmo que de forma resumida.
+- NÃO exija prova absoluta. Em tarefas de pesquisa/informação (ex.: listar notícias, datas, links, fontes), considere cumprido se a IA entregou conteúdo estruturado, específico e coerente com o pedido (ex.: URLs diretas, datas exatas, fontes, resumos). Não reprove por não conseguir ver o log da execução.
+- NÃO especule nem reprove por desconfiança: datas, links ou fatos plausíveis e coerentes não devem ser reprovados por "parecerem" futuros ou por não poderem ser re-verificados agora.
+- Responda NAO_ATENDEU APENAS diante de falha CONCRETA e clara, como:
+  - a IA não executou nada do pedido (resposta vazia, genérica, fugiu do assunto);
+  - faltou parte essencial do plano e a IA ignorou;
+  - a entrega contradiz o pedido ou contém invenções evidentes.
+- Dúvida razoável favorece a entrega (benefício da dúvida). Só reprove com evidência de falha, não por suspeita.
 - NUNCA invente fatos. Baseie-se apenas no conteúdo fornecido.
 - Se a solicitação do usuário estiver vazia, responda NAO_ATENDEU explicando que faltou o pedido original.
 
@@ -50,7 +52,7 @@ ATENDEU
 
 OU
 
-NAO_ATENDEU: <motivo explicando por que não ficou provado que a solicitação foi atendida>`;
+NAO_ATENDEU: <motivo explicando a falha CONCRETA que impediu o atendimento>`;
 
 /** Extrai as últimas N mensagens de texto da IA (role assistant) do branch da sessão. */
 export function getLastAssistantMessages(ctx: ExtensionContext, count = 3): string[] {
