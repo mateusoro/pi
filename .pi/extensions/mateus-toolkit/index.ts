@@ -24,7 +24,8 @@ import { registerBrain } from "./brain/index.ts";
  *   - quality-monitor: anti-loop, detecta respostas repetidas
  *   - shell-session: sessão bash persistente com timeout
  *   - add-new-model: configurar provider OpenAI-like
- *   - brain: MegaBrains no Notion via ntn CLI (brain_bootstrap + futuros módulos)
+ *   - brain: MegaBrains no Notion via ntn CLI (tools buscar_notion/carregar_notion;
+ *     brain_bootstrap/criar_page desregistradas — o documentador usa criarPage direto)
  */
 
 export default async function (pi: ExtensionAPI) {

@@ -789,6 +789,179 @@ export function criarPage(
   }
 }
 
+// ===== Busca e leitura de páginas do brain (módulos buscar_notion / carregar_notion) =====
+
+type NotionPageProps = Record<
+  string,
+  {
+    type?: string;
+    title?: Array<{ plain_text?: string }>;
+    rich_text?: Array<{ plain_text?: string }>;
+    url?: string | null;
+    multi_select?: Array<{ name?: string }>;
+    select?: { name?: string } | null;
+  }
+>;
+
+function propPlainTexts(props: NotionPageProps, key: string): string[] {
+  const p = props[key];
+  if (!p) return [];
+  const arr = p.title ?? p.rich_text ?? [];
+  return (arr ?? []).map((t) => t.plain_text ?? "").filter(Boolean);
+}
+
+function propTags(props: NotionPageProps): string[] {
+  return (props.Tags?.multi_select ?? []).map((t) => t.name ?? "").filter(Boolean);
+}
+
+function propSelect(props: NotionPageProps, key: string): string | null {
+  return props[key]?.select?.name ?? null;
+}
+
+function propGit(props: NotionPageProps): string | null {
+  return props.Git?.url ?? null;
+}
+
+/** Lista todas as páginas do índice com as propriedades (uma chamada). */
+function listIndicePages(dsId: string): Array<{ id: string; props: NotionPageProps }> {
+  try {
+    const out = run(`ntn datasources query ${dsId}`, true);
+    const data = JSON.parse(out) as {
+      results?: Array<{ id: string; properties?: NotionPageProps }>;
+    };
+    return (data.results ?? []).map((r) => ({ id: r.id, props: r.properties ?? {} }));
+  } catch {
+    return [];
+  }
+}
+
+export interface BuscarNotionItem {
+  id: string;
+  descricao: string;
+  git: string | null;
+  sessionId: string | null;
+  keywords: string[];
+}
+
+export interface BuscarNotionResult {
+  ok: boolean;
+  query: string;
+  total: number;
+  items: BuscarNotionItem[];
+  message?: string;
+}
+
+/**
+ * buscarNotion: busca por texto em TODOS os campos das páginas do brain
+ * (título, propriedades, tags, git e corpo do markdown). Retorna apenas:
+ * id, descricao (excerpt do corpo), git, sessionId e keywords.
+ */
+export function buscarNotion(query: string, opts: { logger?: (m: string) => void } = {}): BuscarNotionResult {
+  const log = opts.logger ?? ((m: string) => console.log(m));
+  const fail = (message: string): BuscarNotionResult => ({ ok: false, query, total: 0, items: [], message });
+
+  if (!query || !query.trim()) return fail("Query vazia — informe um texto para buscar.");
+  if (!isLoggedIn()) return fail("Não autenticado no ntn. Rode `ntn login`.");
+  const dsId = getIndiceDsId();
+  if (!dsId) return fail('Brain não inicializado (sem data source "Indice").');
+
+  const q = query.trim().toLowerCase();
+  const pages = listIndicePages(dsId);
+  const items: BuscarNotionItem[] = [];
+
+  for (const { id, props } of pages) {
+    const title = propPlainTexts(props, "Nome")[0] ?? "";
+    const git = propGit(props);
+    const sessionId = propPlainTexts(props, "Session")[0] ?? null;
+    const keywords = propTags(props);
+    const tipo = propSelect(props, "Tipo");
+
+    // corpo md (usado para o match em todos os campos + descricao)
+    let body = "";
+    let bodyTags: string[] = [];
+    try {
+      const page = getPageMarkdown(id);
+      body = page.body;
+      bodyTags = page.tags;
+    } catch {
+      body = "";
+    }
+
+    const haystack = [title, git, sessionId, tipo, keywords.join(" "), body].join("\n").toLowerCase();
+    if (!haystack.includes(q)) continue;
+
+    items.push({
+      id,
+      descricao: body.slice(0, 400) + (body.length > 400 ? "…" : ""),
+      git,
+      sessionId,
+      keywords: keywords.length > 0 ? keywords : bodyTags,
+    });
+  }
+
+  log(`[buscar_notion] "${query}" → ${items.length} página(s)`);
+  return { ok: true, query, total: items.length, items };
+}
+
+export interface CarregarNotionResult {
+  ok: boolean;
+  id: string;
+  md: string | null;
+  dados: {
+    titulo: string | null;
+    tipo: string | null;
+    git: string | null;
+    sessionId: string | null;
+    keywords: string[];
+    status: string | null;
+  } | null;
+  message?: string;
+}
+
+/**
+ * carregarNotion: dado o id da página, traz o markdown completo (título + corpo)
+ * e os dados estruturados (tipo, git, sessionId, keywords, status).
+ */
+export function carregarNotion(pageId: string, opts: { logger?: (m: string) => void } = {}): CarregarNotionResult {
+  const log = opts.logger ?? ((m: string) => console.log(m));
+  const fail = (message: string): CarregarNotionResult => ({ ok: false, id: pageId, md: null, dados: null, message });
+
+  if (!pageId || !pageId.trim()) return fail("id vazio — informe o id da página.");
+  if (!isLoggedIn()) return fail("Não autenticado no ntn. Rode `ntn login`.");
+
+  const id = pageId.trim();
+  let title: string | null = null;
+  let body = "";
+  try {
+    const page = getPageMarkdown(id);
+    title = page.title;
+    body = page.body;
+  } catch {
+    return fail(`Página não encontrada ou sem acesso: ${id}`);
+  }
+
+  // propriedades via API (Tipo, Git, Session, Tags, Status)
+  let props: NotionPageProps = {};
+  try {
+    const out = run(`ntn api v1/pages/${id}`);
+    props = (JSON.parse(out) as { properties?: NotionPageProps }).properties ?? {};
+  } catch { /* props vazias em caso de falha */ }
+
+  const keywords = propTags(props);
+  const dados = {
+    titulo: title,
+    tipo: propSelect(props, "Tipo"),
+    git: propGit(props),
+    sessionId: propPlainTexts(props, "Session")[0] ?? null,
+    keywords,
+    status: propSelect(props, "Status"),
+  };
+  const md = [title ? `# ${title}` : "", body].filter((s) => s.length > 0).join("\n\n").trim();
+
+  log(`[carregar_notion] ${id} → md ${md.length} chars`);
+  return { ok: true, id, md, dados };
+}
+
 // ===== CLI (roda só quando executado diretamente: node brain.ts) =====
 
 function main(): void {

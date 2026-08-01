@@ -1,92 +1,71 @@
 /**
  * brain/index.ts — Módulo "brain" da extensão mateus-toolkit
  *
- * Registra os tools do brain como ferramentas do pi.
- * As funções modulares vivem em ./brain.ts (importáveis e testáveis via node).
+ * Registra os tools de leitura/consulta do brain (Notion) como ferramentas
+ * do pi. As funções modulares vivem em ./brain.ts (importáveis e testáveis).
+ *
+ * Tools registradas:
+ *   - buscar_notion:   busca por texto em todos os campos e retorna
+ *                      id, descricao, git, sessionId e keywords
+ *   - carregar_notion: dado o id, traz o markdown completo + dados
+ *
+ * (brain_bootstrap e criar_page continuam desregistradas — o documentador
+ *  chama criarPage diretamente.)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { ensureBrain, criarPage, BRAIN_PAGE, BRAIN_DB, BRAIN_DS } from "./brain.ts";
+import { buscarNotion, carregarNotion } from "./brain.ts";
 
 export function registerBrain(pi: ExtensionAPI) {
   pi.registerTool({
-    name: "brain_bootstrap",
-    label: "Brain Bootstrap",
+    name: "buscar_notion",
+    label: "Buscar Notion",
     description:
-      `Garante o brain no Notion via ntn CLI (idempotente): página "${BRAIN_PAGE}" ` +
-      `+ database "${BRAIN_DB}" + indexador "${BRAIN_DS}". Se não estiver logado, ` +
-      "abre um terminal novo para `ntn login`.",
+      "Busca por texto em TODOS os campos das páginas do brain (Notion): título, " +
+      "propriedades, tags, git e corpo do markdown. Retorna apenas: id, descricao " +
+      "(trecho do conteúdo), git, sessionId e keywords de cada página encontrada.",
     parameters: Type.Object({
-      dry: Type.Optional(
-        Type.Boolean({ description: "Simula sem criar nada (read-only)" }),
-      ),
-      checkOnly: Type.Optional(
-        Type.Boolean({ description: "Só verifica login + existência (read-only)" }),
-      ),
+      texto: Type.String({ description: "Texto a procurar nas páginas do brain" }),
     }),
     async execute(_id, params) {
       const messages: string[] = [];
-      const result = ensureBrain({
-        dry: params?.dry ?? false,
-        checkOnly: params?.checkOnly ?? false,
-        logger: (m) => messages.push(m),
-      });
+      const result = buscarNotion(params.texto, { logger: (m) => messages.push(m) });
       return {
-        content: [{ type: "text", text: messages.join("\n") }],
+        content: [
+          {
+            type: "text",
+            text: result.ok
+              ? `Busca por "${result.query}": ${result.total} página(s).\n` +
+                JSON.stringify(result.items, null, 2)
+              : `Erro: ${result.message}`,
+          },
+        ],
         details: { ...result },
-        isError: !result.loggedIn,
+        isError: !result.ok,
       };
     },
   });
 
   pi.registerTool({
-    name: "criar_page",
-    label: "Criar Page (Brain)",
+    name: "carregar_notion",
+    label: "Carregar Notion",
     description:
-      `Cria uma página no brain do Notion (indexador "${BRAIN_DS}" da página "${BRAIN_PAGE}"). ` +
-      "Recebe o Markdown text-only e o sistema processa o restante (título do primeiro H1). " +
-      "Parâmetro tipo: \"pesquisa\" (1 página por sessão do pi — o session é o id da pesquisa; " +
-      "se a sessão já tem anotação, ANEXA o novo conteúdo no final da página existente em vez de criar) " +
-      "ou \"codigo\" " +
-      "(extrai a URL do git do markdown; se essa URL já tem anotação no brain, ATUALIZA a página existente; senão cria).",
+      "Dado o id de uma página do brain (Notion), traz o markdown completo dela " +
+      "e os dados estruturados (título, tipo, git, sessionId, keywords, status).",
     parameters: Type.Object({
-      md: Type.String({
-        description: "Markdown text-only do conteúdo da página (o título será o primeiro H1)",
-      }),
-      tipo: Type.Union(
-        [
-          Type.Literal("pesquisa", {
-            description: "1 página por sessão do pi (session = id da pesquisa); se já existe, anexa no final",
-          }),
-          Type.Literal("codigo", {
-            description: "Valida o git do markdown e atualiza a anotação existente no brain se houver",
-          }),
-        ],
-        { default: "pesquisa" },
-      ),
-      palavrasChave: Type.Optional(
-        Type.Array(
-          Type.String({ description: "Palavra-chave/tag para indexar pesquisas e códigos semelhantes" }),
-          { description: "Palavras-chave indexadas na propriedade Tags do índice" },
-        ),
-      ),
+      id: Type.String({ description: "Id da página no brain (retornado por buscar_notion)" }),
     }),
-    async execute(_id, params, _signal, _onUpdate, ctx) {
+    async execute(_id, params) {
       const messages: string[] = [];
-      const result = criarPage(params.md, params.tipo ?? "pesquisa", params.palavrasChave ?? [], {
-        logger: (m) => messages.push(m),
-        cwd: ctx.cwd,
-      });
+      const result = carregarNotion(params.id, { logger: (m) => messages.push(m) });
       return {
         content: [
           {
             type: "text",
-            text:
-              result.message +
-              (result.url ? `\nURL: ${result.url}` : "") +
-              (result.gitUrl ? `\nGit: ${result.gitUrl}` : "") +
-              (result.updated ? "\n(anotação atualizada)" : ""),
+            text: result.ok
+              ? `## Markdown completo (${result.md!.length} chars)\n\n${result.md}\n\n---\n## Dados\n${JSON.stringify(result.dados, null, 2)}`
+              : `Erro: ${result.message}`,
           },
         ],
         details: { ...result },
