@@ -48,10 +48,16 @@ export interface BrainOptions {
 
 // ===== Helpers =====
 
+// Versão fixa da API do Notion: evita o ntn tentar baixar o OpenAPI spec para
+// descobrir o header Notion-Version (falha intermitente com 403 Forbidden que
+// derrubava o documentador/criar_page).
+const NOTION_API_VERSION = "2025-09-03";
+
 function run(cmd: string, json = false): string {
   return execSync(cmd + (json ? " --json" : ""), {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, NOTION_API_VERSION },
   }).trim();
 }
 
@@ -80,12 +86,18 @@ function apiCall(method: string, path: string, body: unknown): string {
 // ===== 1. Login (módulo) =====
 
 export function isLoggedIn(): boolean {
-  try {
-    const out = run("ntn whoami");
-    return out.length > 0;
-  } catch {
-    return false;
+  // retry: o keychain do Windows falha de forma intermitente sob concorrência
+  // (várias chamadas ntn simultâneas no processo do pi), então tenta 3x.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const out = run("ntn whoami");
+      if (out.length > 0) return true;
+    } catch { /* tenta novamente */ }
+    if (attempt < 2) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
   }
+  return false;
 }
 
 export function openLoginTerminal(): void {
@@ -557,6 +569,7 @@ export function editPageContent(pageId: string, md: string): boolean {
       input: md,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, NOTION_API_VERSION },
     });
     return true;
   } catch {
@@ -575,13 +588,15 @@ export interface MetadataInfo {
   sessionId?: string | null;
   provider?: string | null;
   model?: string | null;
+  cwd?: string | null;
 }
 
 /**
  * Bloco de metadata fixo, colocado no INÍCIO antes do texto adicionado:
- * data, hora, sessão do pi, provider/modelo e nome do PC — em visual de nota
- * pequena: blockquote + texto cinza (Notion não suporta tamanho de fonte via
- * markdown; gray é a renderização mais próxima de "letra pequena").
+ * data, hora, sessão do pi, provider/modelo, nome do PC e path completo da
+ * pasta onde o pi rodou — em visual de nota pequena: blockquote + texto cinza
+ * (Notion não suporta tamanho de fonte via markdown; gray é a renderização
+ * mais próxima de "letra pequena").
  * Prioridade: info explícita > env vars do pi > "n/a".
  */
 export function buildMetadataBlock(info: MetadataInfo = {}): string {
@@ -592,7 +607,8 @@ export function buildMetadataBlock(info: MetadataInfo = {}): string {
   const provider = info.provider ?? process.env.PI_PROVIDER ?? "n/a";
   const model = info.model ?? process.env.PI_MODEL ?? "n/a";
   const pc = hostname() || process.env.COMPUTERNAME || "n/a";
-  return `> <span color="gray">_meta: ${date} ${time} · sessão ${session} · ${provider}/${model} · PC ${pc}_</span>`;
+  const cwd = info.cwd ?? process.env.PWD ?? process.cwd();
+  return `> <span color="gray">_meta: ${date} ${time} · sessão ${session} · ${provider}/${model} · PC ${pc} · path ${cwd}_</span>`;
 }
 
 /** Anexa o bloco de metadata fixo no início do markdown a ser adicionado. */
@@ -630,6 +646,8 @@ export function criarPage(
   const keywords = palavrasChave.map((k) => k.trim()).filter(Boolean);
   // session id: metadata explícita (documentador) ou env do pi (sessão atual)
   const sessionId = opts.metadata?.sessionId ?? process.env.PI_SESSION_ID ?? null;
+  // metadata com o path completo da pasta onde o pi rodou
+  const meta: MetadataInfo = { ...opts.metadata, cwd: opts.cwd ?? process.cwd() };
   const fail = (message: string): CriarPageResult => ({
     ok: false,
     pageId: null,
@@ -662,14 +680,21 @@ export function criarPage(
   const gitUrl = opts.gitUrl ?? (opts.cwd ? getGitRemoteFromCwd(opts.cwd) : null) ?? extractGitUrl(md);
 
   // === tipo "pesquisa": 1 página por sessão (Session é o id da pesquisa) ===
-  // Se já existe na sessão, ANEXA o novo md no final da anterior; senão cria.
-  if (tipo === "pesquisa" && sessionId) {
-    const existing = findPageBySessionId(dsId, sessionId);
+  // === dedupe por GIT (qualquer tipo): se já existe página com este git, complementa nela ===
+  // (evita duplicar: o git da pasta atual é a chave primária de dedupe das entregas)
+  if (gitUrl) {
+    const existing = findPageByGitUrl(dsId, gitUrl);
     if (existing) {
-      const res = appendToPage(existing, withMetadata(md, opts.metadata), keywords);
-      log(`[criar_page] 🔄 pesquisa já existe nesta sessão (${sessionId}) → anexado ao final da página ${existing} (${res.message})`);
+      const res = appendToPage(existing, withMetadata(md, meta), keywords);
+      const props: Record<string, unknown> = {
+        Tipo: { select: { name: tipo } },
+        Git: { url: gitUrl },
+      };
+      if (sessionId) props.Session = { rich_text: [{ text: { content: sessionId } }] };
+      const propsOk = setPageProperties(existing, props);
+      log(`[criar_page] 🔄 git já anotado no brain (${gitUrl}) → complementado na página ${existing} (${res.message}, props: ${propsOk})`);
       return {
-        ok: res.ok,
+        ok: res.ok && propsOk,
         pageId: existing,
         url: null,
         title: null,
@@ -679,78 +704,48 @@ export function criarPage(
         sessionId,
         palavrasChave: keywords,
         updated: true,
-        message: `Pesquisa já existe nesta sessão do pi — conteúdo anexado ao final da página ${existing}.`,
+        message: `Git já anotado no brain — conteúdo complementado na página ${existing}.`,
       };
     }
   }
 
-  // === tipo "codigo": 1º complementa no git (pasta atual/md), 2º complementa na sessão, senão cria ===
-  if (tipo === "codigo") {
-    // 1. verifica o github e complementa na página que já tem essa anotação
-    if (gitUrl) {
-      const existing = findPageByGitUrl(dsId, gitUrl);
-      if (existing) {
-        const res = appendToPage(existing, withMetadata(md, opts.metadata), keywords);
-        const props: Record<string, unknown> = {
-          Tipo: { select: { name: "codigo" } },
-          Git: { url: gitUrl },
-        };
-        if (sessionId) props.Session = { rich_text: [{ text: { content: sessionId } }] };
-        const propsOk = setPageProperties(existing, props);
-        log(`[criar_page] 🔄 git já anotado no brain (${gitUrl}) → complementado na página ${existing} (${res.message}, props: ${propsOk})`);
-        return {
-          ok: res.ok && propsOk,
-          pageId: existing,
-          url: null,
-          title: null,
-          dsId,
-          tipo,
-          gitUrl,
-          sessionId,
-          palavrasChave: keywords,
-          updated: true,
-          message: `Git já anotado no brain — conteúdo complementado na página ${existing}.`,
-        };
-      }
+  // === mesma sessão do pi: complementa na página da sessão (qualquer tipo) ===
+  if (sessionId) {
+    const existing = findPageBySessionId(dsId, sessionId);
+    if (existing) {
+      const res = appendToPage(existing, withMetadata(md, meta), keywords);
+      const props: Record<string, unknown> = {
+        Tipo: { select: { name: tipo } },
+      };
+      if (gitUrl) props.Git = { url: gitUrl };
+      const propsOk = setPageProperties(existing, props);
+      log(`[criar_page] 🔄 mesma sessão (${sessionId}) → complementado na página ${existing} (${res.message}, props: ${propsOk})`);
+      return {
+        ok: res.ok && propsOk,
+        pageId: existing,
+        url: null,
+        title: null,
+        dsId,
+        tipo,
+        gitUrl,
+        sessionId,
+        palavrasChave: keywords,
+        updated: true,
+        message: `Mesma sessão do pi — conteúdo complementado na página ${existing}.`,
+      };
     }
-    // 2. mesmo session do pi: complementa na página da sessão (como na pesquisa)
-    if (sessionId) {
-      const existing = findPageBySessionId(dsId, sessionId);
-      if (existing) {
-        const res = appendToPage(existing, withMetadata(md, opts.metadata), keywords);
-        const props: Record<string, unknown> = {
-          Tipo: { select: { name: "codigo" } },
-        };
-        if (gitUrl) props.Git = { url: gitUrl };
-        const propsOk = setPageProperties(existing, props);
-        log(`[criar_page] 🔄 código sem git anotado, mas mesma sessão (${sessionId}) → complementado na página ${existing} (${res.message}, props: ${propsOk})`);
-        return {
-          ok: res.ok && propsOk,
-          pageId: existing,
-          url: null,
-          title: null,
-          dsId,
-          tipo,
-          gitUrl,
-          sessionId,
-          palavrasChave: keywords,
-          updated: true,
-          message: `Mesma sessão do pi — conteúdo complementado na página ${existing}.`,
-        };
-      }
-    }
-    log(`[criar_page] 🆕 código sem anotação prévia${gitUrl ? ` (${gitUrl})` : " (sem git detectado na pasta/md)"} → criando nova página`);
   }
 
-  // === criação (pesquisa sempre passa por aqui; código quando não há anotação) ===
+  // === criação (só quando não existe nem página do git nem página da sessão) ===
   // metadata fixa no INÍCIO, antes do texto adicionado (data, hora, sessão, provider/model, PC)
-  const mdComMeta = withMetadata(md, opts.metadata);
+  const mdComMeta = withMetadata(md, meta);
   const mdTitle = extractTitle(md) ?? "";
   try {
     const out = execSync(`ntn pages create --parent data-source:${dsId} --json`, {
       input: mdComMeta,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, NOTION_API_VERSION },
     });
     const page = JSON.parse(out.trim()) as {
       id: string;
@@ -820,6 +815,11 @@ function propSelect(props: NotionPageProps, key: string): string | null {
 
 function propGit(props: NotionPageProps): string | null {
   return props.Git?.url ?? null;
+}
+
+/** Detecta erros de autenticação nos erros do ntn (mensagem da exceção do execSync). */
+function isAuthError(msg: string): boolean {
+  return /api token is invalid|unauthorized|401|not authenticated|ntn login|login first|autenticad/i.test(msg);
 }
 
 /** Lista todas as páginas do índice com as propriedades (uma chamada). */
@@ -927,7 +927,6 @@ export function carregarNotion(pageId: string, opts: { logger?: (m: string) => v
   const fail = (message: string): CarregarNotionResult => ({ ok: false, id: pageId, md: null, dados: null, message });
 
   if (!pageId || !pageId.trim()) return fail("id vazio — informe o id da página.");
-  if (!isLoggedIn()) return fail("Não autenticado no ntn. Rode `ntn login`.");
 
   const id = pageId.trim();
   let title: string | null = null;
@@ -936,7 +935,9 @@ export function carregarNotion(pageId: string, opts: { logger?: (m: string) => v
     const page = getPageMarkdown(id);
     title = page.title;
     body = page.body;
-  } catch {
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isAuthError(msg)) return fail("Não autenticado no ntn. Rode `ntn login`.");
     return fail(`Página não encontrada ou sem acesso: ${id}`);
   }
 

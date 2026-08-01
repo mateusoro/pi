@@ -10,6 +10,7 @@ import { registerQualityMonitor } from "./quality-monitor.ts";
 import { registerShellSession } from "./shell-session.ts";
 import { registerAddNewModel } from "./add-new-model.ts";
 import { registerBrain } from "./brain/index.ts";
+import { registerYouTube } from "./youtube.ts";
 
 /**
  * mateus-toolkit - Extensão modular
@@ -26,6 +27,7 @@ import { registerBrain } from "./brain/index.ts";
  *   - add-new-model: configurar provider OpenAI-like
  *   - brain: MegaBrains no Notion via ntn CLI (tools buscar_notion/carregar_notion;
  *     brain_bootstrap/criar_page desregistradas — o documentador usa criarPage direto)
+ *   - youtube: intermediador TS→python (youtube-tools): buscar vídeo e extrair legenda
  */
 
 export default async function (pi: ExtensionAPI) {
@@ -41,6 +43,7 @@ export default async function (pi: ExtensionAPI) {
   registerShellSession(pi);
   registerAddNewModel(pi);
   registerBrain(pi);
+  registerYouTube(pi);
 
   log("INFO", "All modules registered");
 }
