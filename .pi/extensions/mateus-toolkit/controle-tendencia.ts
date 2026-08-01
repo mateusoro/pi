@@ -130,12 +130,15 @@ export function registerControleTendencia(pi: ExtensionAPI) {
       // A injeção imediata do próximo item já é feita UMA vez no agent_end (com guard de pendências),
       // sem cair em re-trigger infinito.
 
+      const original = lastUserMessage ? `\nA solicitação original do usuário foi: "${lastUserMessage}"` : "";
+
       return {
         content: [{
           type: "text",
-          text: proximo
+          text: (proximo
             ? `#${item.id} concluído: "${item.text}"\nProgresso: ${done.length}/${todo.items.length}\nPróximo: #${proximo.id}. ${proximo.text}`
-            : `#${item.id} concluído: "${item.text}"\nTODO 100% concluído!`,
+            : `#${item.id} concluído: "${item.text}"\nTODO 100% concluído!`
+          ) + original,
         }],
         details: { todo },
       };
@@ -306,6 +309,17 @@ O usuário pediu: "${userSnippet}"
   let steerCount = 0;
 
   pi.on("agent_end", async (event, ctx) => {
+    // Se a run foi interrompida (ESC/abort), NÃO re-triggar novos turnos.
+    // Repete o guard do quality-monitor: turnos abortados não devem disparar
+    // sendUserMessage(... triggerTurn:true), senão o ESC não interrompe de fato.
+    const lastAssistantMsg = [...event.messages].reverse().find(
+      (m: any) => m.role === "assistant"
+    );
+    if (lastAssistantMsg && (lastAssistantMsg as any).stopReason === "aborted") {
+      log("INFO", "agent_end: turno abortado (ESC). Ignorando re-trigger para respeitar interrupção.");
+      return;
+    }
+
     if (todoCreatedThisTurn) {
       steerCount = 0;
 
@@ -395,6 +409,8 @@ O usuário pediu: "${userSnippet}"
 Progresso: ${done.length}/${total} (${progresso}%).
 ATUAL SENDO REALIZADO: #${proximo.id}. ${proximo.text}
 Siga o plano, se precisar mudar algo, chame create_todo para alterar o plano. Ao concluir, chame check_todo(id=${proximo.id}).
+A solicitação do usuário foi: "${lastUserMessage}"
+Chame imediatamente websearch pra buscar uma solução.
 [/ALINHAMENTO CONFORME PLANO]`,
         { deliverAs: "steer" }
       );
