@@ -180,10 +180,10 @@ export function registerControleTendencia(pi: ExtensionAPI) {
     turnCounter = 0;
     externalToolCallCount = 0;
 
-    // Sem todo ativo → forçar criação do todo
-    if (!todo) {
-      const userSnippet = event.text.substring(0, 200).replace(/"/g, '\\"');
-      const forceTodo = `
+    // Função para montar o texto que força a criação do todo (primeira mensagem OU nova conversa)
+    const buildForceTodo = () => {
+      const userSnippet = event.text.replace(/"/g, '\\"');
+      return `
 [CONTEXTO - CRIAR TODO OBRIGATÓRIO]
 SUA ÚNICA RESPOSTA DEVE SER create_todo(items=["passo1","passo2"...], summary="resumo").
 NÃO escreva texto. NÃO chame OUTRAS tools.
@@ -199,7 +199,11 @@ REGRAS OBRIGATÓRIAS PARA O TODO:
 
 O usuário pediu: "${userSnippet}"
 [/CONTEXTO - CRIAR TODO OBRIGATÓRIO]`;
-      return { action: "transform", text: event.text + forceTodo };
+    };
+
+    // Sem todo ativo → forçar criação do todo
+    if (!todo) {
+      return { action: "transform", text: event.text + buildForceTodo() };
     }
 
     // Todo ativo → SEMPRE chamar create_todo pra atualizar o plano
@@ -227,8 +231,11 @@ Chame create_todo para atualizar o todo conforme a mensagem do usuário.
       return { action: "transform", text: event.text + contextSnippet };
     }
 
-    // Todos concluídos
-    return { action: "continue" };
+    // Todos concluídos: ao iniciar uma nova conversa no mesmo chat,
+    // limpar o todo concluído e forçar a criação de um novo plano.
+    todo = null;
+    summary = null;
+    return { action: "transform", text: event.text + buildForceTodo() };
   });
 
   // ── before_agent_start: INJETAR instrução obrigatória ──
@@ -251,7 +258,7 @@ Chame get_todo(), implemente, e ao terminar chame check_todo(id=N).`;
       return { systemPrompt };
     }
 
-    const userSnippet = lastUserMessage.substring(0, 200).replace(/"/g, '\\"');
+    const userSnippet = lastUserMessage.replace(/"/g, '\\"');
 
     const instruction = `
 [MATEUS-TOOLKIT - BLOQUEADO ATÉ CRIAR TODO]
