@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 import { log } from "./logger.ts";
+import { runJuiz, getLastAssistantMessages, buildJudgeRetryMessage } from "./juiz.ts";
 
 interface TodoItem {
   id: number;
@@ -314,6 +315,10 @@ O usuário pediu: "${userSnippet}"
 
   // ── agent_end: verificar se create_todo foi chamado ──
   let steerCount = 0;
+  // Segurança anti-trava: limite de rodadas consecutivas do juiz sem veredito ATENDEU
+  // (NAO_ATENDEU ou resposta não parseável). Ao atingir o máximo, entrega e para o chat.
+  const MAX_JUDGE_RETRIES = 3;
+  let judgeRetryCount = 0;
 
   pi.on("agent_end", async (event, ctx) => {
     // Se a run foi interrompida (ESC/abort), NÃO re-triggar novos turnos.
@@ -341,6 +346,49 @@ O usuário pediu: "${userSnippet}"
           log("INFO", `Todo ativo com ${pending.length} itens pendentes. Injetando steer.`);
           pi.sendUserMessage(
             `[SISTEMA] O item #${proximo.id} ainda precisa ser implementado: ${proximo.text}\n\nTodo atual:\n${checklist}\n\nChame get_todo() para ver o estado completo e implemente o próximo item.`,
+            { deliverAs: "followUp", triggerTurn: true }
+          );
+        } else {
+          // TODOS os todos marcados → rodar o micro-agente JUIZ
+          if (!lastUserMessage) {
+            log("WARN", "Sem lastUserMessage registrada. Pulando juiz.");
+            return;
+          }
+          log("INFO", "Todos os itens concluídos. Rodando micro-agente juiz.");
+          const checklist = todo.items.map((item) =>
+            `- [${item.done ? "x" : " "}] #${item.id}. ${item.text}`
+          ).join("\n");
+          const todoText = `${checklist}${summary ? `\n\nResumo do plano:\n${summary.text}` : ""}`;
+          const judgeResult = await runJuiz(ctx, {
+            userMessage: lastUserMessage,
+            todoText,
+            lastAssistantMessages: getLastAssistantMessages(ctx, 3),
+          });
+
+          if (judgeResult.status === "erro") {
+            log("ERROR", "juiz falhou. Parando chat sem injetar turno.", { error: judgeResult.error });
+            return;
+          }
+
+          if (judgeResult.status === "atendeu") {
+            judgeRetryCount = 0;
+            log("INFO", "JUIZ: ATENDEU. Entregando e parando o chat.");
+            return;
+          }
+
+          // NAO_ATENDEU ou INVALIDO: acumula retry (anti-trava)
+          judgeRetryCount++;
+          if (judgeRetryCount >= MAX_JUDGE_RETRIES) {
+            log("WARN", `JUIZ: sem veredito ATENDEU em ${judgeRetryCount} rodadas seguidas. Entregando e parando o chat (segurança anti-trava).`);
+            return;
+          }
+          log(
+            "INFO",
+            `JUIZ: ${judgeResult.status === "nao_atendeu" ? "NAO_ATENDEU" : "resposta inválida"} (${judgeRetryCount}/${MAX_JUDGE_RETRIES}). Injetando retry com create_todo.`,
+            { motivo: judgeResult.motivo?.substring(0, 200) }
+          );
+          pi.sendUserMessage(
+            buildJudgeRetryMessage(judgeResult.motivo, lastUserMessage),
             { deliverAs: "followUp", triggerTurn: true }
           );
         }
