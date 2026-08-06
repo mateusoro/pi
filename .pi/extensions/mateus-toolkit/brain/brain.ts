@@ -85,19 +85,54 @@ function apiCall(method: string, path: string, body: unknown): string {
 
 // ===== 1. Login (módulo) =====
 
-export function isLoggedIn(): boolean {
+/**
+ * Diagnóstico do estado do ntn neste ambiente.
+ * Distingue o caso crítico de "o binário ntn NÃO existe" (ENOENT/command not
+ * found) do caso normal de "está instalado mas não autenticado". Sem essa
+ * distinção, um PC sem ntn instalado reporta de forma enganosa "Não autenticado".
+ *
+ * Retorna:
+ *   - "ok"             → ntn instalado e autenticado (ntn whoami OK)
+ *   - "not-installed"  → binário ntn ausente (fora de execução/instalação)
+ *   - "not-authenticated" → ntn instalado mas sem sessão ativa
+ */
+export function getNtnStatus(): "ok" | "not-installed" | "not-authenticated" {
   // retry: o keychain do Windows falha de forma intermitente sob concorrência
   // (várias chamadas ntn simultâneas no processo do pi), então tenta 3x.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const out = run("ntn whoami");
-      if (out.length > 0) return true;
-    } catch { /* tenta novamente */ }
+      if (out.length > 0) return "ok";
+      return "not-authenticated";
+    } catch (e) {
+      // NÃO loga ENOENT (binário ausente) como autenticação → reclassifica.
+      if (isNtnNotInstalled(e)) return "not-installed";
+    }
     if (attempt < 2) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
     }
   }
-  return false;
+  return "not-authenticated";
+}
+
+/** true se o erro indica que o binário ntn não existe no PATH. Cobrindo:
+ * - shell (bash/macOS/Linux): "command not found", status 127, ENOENT
+ * - cmd/powershell (Windows): "não é reconhecido como um comando interno",
+ *   "is not recognized as an internal or external command", status 1
+ * Sem essa detecção, um Windows sem ntn reportaria "não autenticado" (erro enganoso).
+ */
+function isNtnNotInstalled(e: unknown): boolean {
+  const err = e as { code?: string; message?: string; status?: number; stderr?: unknown } | undefined;
+  const msg = (err?.message ?? "") + "\n" + String(err?.stderr ?? "");
+  if (err?.code === "ENOENT") return true;
+  // "reconhecido" é a única palavra ASCII estável da mensagem do Windows
+  // "não é reconhecido como um comando interno" (o acento vira � no cmd).
+  return /command not found|not recognized|nenhum comando|reconhecido|spawn .* enoent|execvp|status 127/i.test(msg);
+}
+
+/** Compat: retorna true apenas se o ntn está instalado E autenticado. */
+export function isLoggedIn(): boolean {
+  return getNtnStatus() === "ok";
 }
 
 export function openLoginTerminal(): void {
@@ -273,7 +308,12 @@ export function ensureBrain(opts: BrainOptions = {}): BrainResult {
   };
 
   // 1) Login
-  if (!isLoggedIn()) {
+  const ntnState = getNtnStatus();
+  if (ntnState !== "ok") {
+    if (ntnState === "not-installed") {
+      log("[login] ❌ CLI ntn (Notion) NÃO está instalada neste PC. Rode `npm install -g ntn` (Windows) ou `winget install Notion.ntn`.");
+      return result;
+    }
     log(`[login] NÃO autenticado (${dry || checkOnly ? "--dry/--check, não abre terminal" : "abrindo terminal novo para: " + LOGIN_CMD})`);
     if (!dry && !checkOnly) openLoginTerminal();
     return result;
@@ -663,7 +703,13 @@ export function criarPage(
   });
 
   if (!md.trim()) return fail("Markdown vazio — nada a criar.");
-  if (!isLoggedIn()) {
+  const ntnState = getNtnStatus();
+  if (ntnState !== "ok") {
+    if (ntnState === "not-installed") {
+      return fail(
+        "CLI ntn (Notion) NÃO está instalada neste PC. Rode `npm install -g ntn` (Windows) ou `winget install Notion.ntn` para corrigir.",
+      );
+    }
     return fail("Não autenticado no ntn. Rode brain_bootstrap (abre o login) ou `ntn login`.");
   }
 
@@ -861,7 +907,13 @@ export function buscarNotion(query: string, opts: { logger?: (m: string) => void
   const fail = (message: string): BuscarNotionResult => ({ ok: false, query, total: 0, items: [], message });
 
   if (!query || !query.trim()) return fail("Query vazia — informe um texto para buscar.");
-  if (!isLoggedIn()) return fail("Não autenticado no ntn. Rode `ntn login`.");
+  const ntnState = getNtnStatus();
+  if (ntnState !== "ok") {
+    if (ntnState === "not-installed") {
+      return fail("CLI ntn (Notion) NÃO está instalada neste PC. Rode `npm install -g ntn` (Windows) ou `winget install Notion.ntn`.");
+    }
+    return fail("Não autenticado no ntn. Rode `ntn login`.");
+  }
   const dsId = getIndiceDsId();
   if (!dsId) return fail('Brain não inicializado (sem data source "Indice").');
 
